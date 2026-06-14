@@ -304,6 +304,112 @@
       return p;
     }
 
+    function profileBoxinessScore(profile) {
+      const n = profile.length;
+      if (n < 10) return 0;
+      let maxR = 0;
+      for (const p of profile) maxR = Math.max(maxR, p.x);
+
+      let maxFlatRun = 0;
+      let run = 1;
+      for (let i = 1; i < n; i++) {
+        const r0 = profile[i - 1].x;
+        const r1 = profile[i].x;
+        const dr = Math.abs(r1 - r0) / Math.max(maxR, 0.01);
+        const nearMax = Math.min(r0, r1) / Math.max(maxR, 0.01) > 0.68;
+        if (dr < 0.0055 && nearMax) {
+          run++;
+          maxFlatRun = Math.max(maxFlatRun, run);
+        } else {
+          run = 1;
+        }
+      }
+
+      let verticalWallPoints = 0;
+      for (let i = 2; i < n - 2; i++) {
+        const t = i / (n - 1);
+        if (t < 0.18 || t > 0.86) continue;
+        const dr = Math.abs(profile[i].x - profile[i - 1].x) / Math.max(maxR, 0.01);
+        if (dr < 0.0035 && profile[i].x / maxR > 0.66) verticalWallPoints++;
+      }
+
+      let score = 0;
+      const flatRatio = maxFlatRun / n;
+      if (flatRatio > 0.08) score += (flatRatio - 0.08) * 10;
+      score += (verticalWallPoints / n) * 5.5;
+      return Math.min(1, score);
+    }
+
+    function profileShoulderCornerPenalty(profile) {
+      const n = profile.length;
+      let maxR = 0;
+      let maxIdx = 0;
+      for (let i = 0; i < n; i++) {
+        if (profile[i].x > maxR) {
+          maxR = profile[i].x;
+          maxIdx = i;
+        }
+      }
+      if (maxR < 0.01 || maxIdx < 3 || maxIdx > n - 12) return 0;
+
+      let penalty = 0;
+      const rise = (profile[maxIdx].x - profile[Math.max(0, maxIdx - 3)].x) / maxR;
+      let flatAfter = 0;
+      const scanEnd = Math.min(n - 1, maxIdx + Math.floor(n * 0.14));
+      for (let i = maxIdx + 1; i <= scanEnd; i++) {
+        if (Math.abs(profile[i].x - profile[i - 1].x) / maxR < 0.0035) flatAfter++;
+      }
+      if (rise > 0.07 && flatAfter >= 3) penalty += 1.4;
+
+      let wallLen = 0;
+      for (let i = maxIdx + 1; i < n - 4; i++) {
+        if (Math.abs(profile[i].x - profile[maxIdx].x) / maxR < 0.028) wallLen++;
+        else if (wallLen > 2) break;
+      }
+      if (wallLen / n > 0.07) penalty += 1.6;
+
+      return penalty;
+    }
+
+    function profileTrapezoidBasePenalty(profile) {
+      const n = profile.length;
+      let maxR = 0;
+      for (const p of profile) maxR = Math.max(maxR, p.x);
+
+      const lowStart = Math.floor(n * 0.06);
+      const lowEnd = Math.floor(n * 0.2);
+      let minR = Infinity;
+      for (let i = lowStart; i <= lowEnd; i++) minR = Math.min(minR, profile[i].x);
+      if (minR === Infinity) return 0;
+
+      const footR = profile[0].x;
+      const bodyR = profile[Math.floor(n * 0.38)].x;
+      if (bodyR / maxR > 0.72 && minR / maxR < 0.52 && footR > minR * 1.12) {
+        return 1.3;
+      }
+      return 0;
+    }
+
+    function relaxBoxyWalls(profile) {
+      const out = profile.map((p) => p.clone());
+      const n = out.length;
+      let maxR = 0;
+      for (const p of out) maxR = Math.max(maxR, p.x);
+
+      for (let pass = 0; pass < 2; pass++) {
+        for (let i = 3; i < n - 3; i++) {
+          const dr = Math.abs(out[i].x - out[i - 1].x) / Math.max(maxR, 0.01);
+          const rNorm = out[i].x / Math.max(maxR, 0.01);
+          if (dr < 0.0035 && rNorm > 0.64) {
+            const t = i / (n - 1);
+            out[i].x += Math.sin(t * Math.PI * 1.15) * maxR * 0.012;
+          }
+        }
+        capProfileSlopes(out, 0.004);
+      }
+      return smoothPotteryProfile(out);
+    }
+
     function profileSpikiness(profile) {
       let inflect = 0;
       for (let i = 2; i < profile.length; i++) {
@@ -592,11 +698,12 @@
       p = syncBaseWithBody(p);
       p = refineProfileSilhouette(p, isCultural);
       p = softenWaistPinch(p, isCultural ? 0.82 : 0.76);
-      if (profileCapsuleScore(p) > 0.42 || profileSlendernessScore(p) > MAX_SLENDERNESS_SCORE) {
+      if (profileCapsuleScore(p) > MAX_CAPSULE_SCORE || profileSlendernessScore(p) > MAX_SLENDERNESS_SCORE) {
         p = applyCeramicMouth(refineProfileSilhouette(profile, true), rng);
         p = applyCeramicBase(p, rng);
         p = syncBaseWithBody(p);
       }
+      if (isCultural) p = relaxBoxyWalls(p);
       if (isCultural) p = smoothPotteryProfile(p);
       return p;
     }
@@ -1014,7 +1121,10 @@
       if (baseR / Math.max(maxR, 0.01) < 0.16) penalty += 1.8;
       if (midR / Math.max(maxR, 0.01) < 0.3) penalty += 1.4;
       if (profileSlendernessScore(profile) > 0.28) penalty += 1.6;
-      if (profileCapsuleScore(profile) > 0.34) penalty += 1.2;
+      if (profileCapsuleScore(profile) > 0.28) penalty += 1.6;
+      penalty += profileBoxinessScore(profile) * 2.4;
+      penalty += profileShoulderCornerPenalty(profile) * 1.5;
+      penalty += profileTrapezoidBasePenalty(profile) * 1.2;
       penalty += profileMaxAngularJump(profile) * 42;
       penalty += profileFootSpindlePenalty(profile) * 2.2;
       return penalty;
@@ -1032,6 +1142,10 @@
       if (profileSpikiness(data.profile) > MAX_PROFILE_SPIKINESS) return false;
       if (profileMaxAngularJump(data.profile) > 0.0075) return false;
       if (profileFootSpindlePenalty(data.profile) > 0.08) return false;
+      if (profileBoxinessScore(data.profile) > MAX_BOXINESS_SCORE) return false;
+      if (profileShoulderCornerPenalty(data.profile) > 0.35) return false;
+      if (profileTrapezoidBasePenalty(data.profile) > 0.5) return false;
+      if (profileCapsuleScore(data.profile) > MAX_CAPSULE_SCORE) return false;
       if (culturalProfileScore(data) < 0.36) return false;
       return profilePotteryDeparturePenalty(data.profile) < 0.32;
     }
@@ -1155,7 +1269,8 @@
     const RECENT_FORM_LIMIT = 20;
     const RECENT_ARCHETYPE_BLOCK = 4;
     const MAX_PROFILE_SPIKINESS = 0.022;
-    const MAX_CAPSULE_SCORE = 0.44;
+    const MAX_CAPSULE_SCORE = 0.30;
+    const MAX_BOXINESS_SCORE = 0.16;
     const MAX_SLENDERNESS_SCORE = 0.4;
     let recentFormHistory = [];
     let recentArchetypeHistory = [];
@@ -1529,6 +1644,8 @@
           + roundness * 13
           + culturalBonus
           - profilePotteryDeparturePenalty(data.profile) * 8
+          - profileBoxinessScore(data.profile) * 14
+          - profileShoulderCornerPenalty(data.profile) * 6
           - profileCapsuleScore(data.profile) * capsulePenalty
           - profileSlendernessScore(data.profile) * 7;
 
@@ -1748,6 +1865,9 @@
       score += 0.9 - Math.min(0.9, Math.abs(aspect - 0.92) / 0.55);
 
       score -= profilePotteryDeparturePenalty(data.profile) * 1.8;
+      score -= profileBoxinessScore(data.profile) * 2.6;
+      score -= profileShoulderCornerPenalty(data.profile) * 1.4;
+      score -= profileTrapezoidBasePenalty(data.profile) * 1.2;
 
       const mouthRatio = sig.mouthR / Math.max(sig.maxR, 0.01);
       if (mouthRatio >= 0.24 && mouthRatio <= 0.52) score += 0.5;
@@ -2493,6 +2613,11 @@
       for (let i = 0; i < n; i++) {
         out[i].x = footFixed[i].x;
         out[i].y = footFixed[i].y;
+      }
+      const relaxed = relaxBoxyWalls(out);
+      for (let i = 0; i < n; i++) {
+        out[i].x = relaxed[i].x;
+        out[i].y = relaxed[i].y;
       }
       morphScratch.geo.profile = out;
       morphScratch.geo.mouthR = fromData.mouthR + (toData.mouthR - fromData.mouthR) * ease;
