@@ -1715,9 +1715,9 @@
     }
 
     const LATHE_SEGMENTS = 72;
-    const FORM_CHANGE_INTERVAL = 2.0;
-    const MORPH_DURATION = 1.55;
-    const HOLD_DURATION = 0.08;
+    const FORM_CHANGE_INTERVAL = 2.4;
+    const MORPH_DURATION = 1.85;
+    const HOLD_DURATION = 0.12;
     const FAST_MORPH_ATTEMPTS = 5;
     const FAST_MORPH_PICKS = 6;
     const BIRTH_DURATION = 2.4;
@@ -1841,6 +1841,12 @@
       const heightScale = computeFormHeightScale(profile, raw.formType, raw.formSeed);
       const scaled = scaleProfileHeight(profile, heightScale);
       const bounds = profileBounds(scaled);
+      const material = deriveMaterialTuning(scaled, {
+        formType: raw.formType,
+        surfaceType: raw.surfaceType,
+        heightScale,
+        formSeed: raw.formSeed
+      });
       return {
         profile: scaled,
         yMin: bounds.yMin,
@@ -1853,7 +1859,8 @@
         surfaceType: raw.surfaceType,
         latheSegments: raw.latheSegments || LATHE_SEGMENTS,
         colorShift: rng(),
-        dispScale: 0.78 + rng() * 0.34
+        material,
+        dispScale: material.dispScale
       };
     }
 
@@ -1917,6 +1924,186 @@
       d += Math.abs(sa.volume - sb.volume) / Math.max(sa.volume, 0.02) * 0.35;
       if (sa.formType !== sb.formType) d += 0.42;
       return d;
+    }
+
+    const DEFAULT_MATERIAL = Object.freeze({
+      glazeSheen: 0.52,
+      bodyMass: 0.48,
+      waterFlow: 0.5,
+      veinContrast: 0.46,
+      rimGlass: 0.44,
+      subsurface: 0.5,
+      curveAccent: 0.48,
+      glazeSoftness: 0.42,
+      dispScale: 0.88
+    });
+
+    const SURFACE_FINISH_PRESETS = [
+      { vein: 0, water: 0, sheen: 0, rim: 0, sub: 0, soft: 0 },
+      { vein: 0.14, water: -0.04, sheen: -0.06, rim: 0.02, sub: -0.04, soft: 0.08 },
+      { vein: 0.06, water: 0.22, sheen: 0.04, rim: 0.08, sub: 0.04, soft: -0.06 },
+      { vein: 0.16, water: 0.06, sheen: 0.08, rim: -0.02, sub: 0.02, soft: 0.04 },
+      { vein: 0.08, water: 0.04, sheen: 0.1, rim: 0.04, sub: 0.06, soft: 0.1 },
+      { vein: 0.1, water: 0.12, sheen: 0.06, rim: 0.02, sub: 0.08, soft: 0.06 },
+      { vein: 0.04, water: 0.08, sheen: -0.04, rim: 0.06, sub: 0.04, soft: 0.12 },
+      { vein: -0.06, water: -0.1, sheen: -0.08, rim: 0.2, sub: 0.1, soft: 0.14 }
+    ];
+
+    function clampMaterial(v) {
+      return Math.min(1, Math.max(0, v));
+    }
+
+    function deriveMaterialTuning(profile, meta = {}) {
+      const mouthR = profile[profile.length - 1].x;
+      let maxR = 0;
+      let waistR = Infinity;
+      let volume = 0;
+      const midStart = Math.floor(profile.length * 0.2);
+      const midEnd = Math.floor(profile.length * 0.8);
+      let peakCount = 0;
+      let meanR = 0;
+      for (let i = 0; i < profile.length; i++) {
+        const r = profile[i].x;
+        maxR = Math.max(maxR, r);
+        meanR += r;
+        if (i >= midStart && i <= midEnd) waistR = Math.min(waistR, r);
+        volume += r * r;
+      }
+      meanR /= Math.max(profile.length, 1);
+      for (let i = 1; i < profile.length - 1; i++) {
+        const r = profile[i].x;
+        if (r > profile[i - 1].x && r > profile[i + 1].x && r > meanR * 1.08) peakCount++;
+      }
+      waistR = waistR === Infinity ? maxR : waistR;
+      const bounds = profileBounds(profile);
+      const aspect = bounds.yRange / Math.max(maxR, 0.08);
+      const mouthRatio = mouthR / Math.max(maxR, 0.01);
+      const waistRatio = waistR / Math.max(maxR, 0.01);
+      const fullness = maxR / Math.max(waistR, 0.01);
+      const heightScale = meta.heightScale ?? 1;
+      const surfaceType = Math.min(7, Math.max(0, Math.floor(meta.surfaceType ?? 0)));
+      const formType = meta.formType ?? '';
+
+      let glazeSheen = 0.52;
+      let bodyMass = 0.48;
+      let waterFlow = 0.5;
+      let veinContrast = 0.46;
+      let rimGlass = 0.44;
+      let subsurface = 0.5;
+      let curveAccent = 0.48;
+      let glazeSoftness = 0.42;
+      let rippleScale = 0.86;
+
+      if (aspect > 1.28) {
+        glazeSheen += 0.11;
+        waterFlow += 0.16;
+        bodyMass -= 0.07;
+        rimGlass += 0.05;
+      }
+      if (aspect < 0.98 || mouthRatio > 0.8) {
+        bodyMass += 0.13;
+        rimGlass += 0.15;
+        subsurface += 0.09;
+        waterFlow -= 0.07;
+        glazeSheen -= 0.05;
+        glazeSoftness += 0.08;
+      }
+      if (fullness >= 1.12 && fullness <= 2.25 && waistRatio > 0.52) {
+        subsurface += 0.11;
+        glazeSoftness += 0.12;
+        veinContrast -= 0.05;
+        curveAccent += 0.07;
+      }
+      if (waistRatio < 0.54 && fullness > 1.65) {
+        curveAccent += 0.16;
+        glazeSheen += 0.09;
+        veinContrast += 0.07;
+        waterFlow += 0.05;
+      }
+      if (peakCount >= 2) {
+        veinContrast += 0.1 + peakCount * 0.035;
+        curveAccent += 0.09;
+        waterFlow += 0.04;
+      }
+      if (mouthRatio < 0.42) {
+        bodyMass += 0.06;
+        glazeSheen += 0.05;
+        waterFlow += 0.08;
+      }
+
+      rippleScale += (heightScale - 1) * 0.11;
+      waterFlow += (heightScale - 1) * 0.07;
+      bodyMass += Math.max(0, volume * 0.0018 - 0.04);
+
+      const finish = SURFACE_FINISH_PRESETS[surfaceType] || SURFACE_FINISH_PRESETS[0];
+      veinContrast += finish.vein;
+      waterFlow += finish.water;
+      glazeSheen += finish.sheen;
+      rimGlass += finish.rim;
+      subsurface += finish.sub;
+      glazeSoftness += finish.soft;
+
+      if (/Squat|OpenBowl|Pedestal/i.test(formType)) {
+        bodyMass += 0.1;
+        rimGlass += 0.11;
+        waterFlow -= 0.05;
+      }
+      if (/Maebyeong|Taper|DiscNeck|Amphora/i.test(formType)) {
+        waterFlow += 0.13;
+        glazeSheen += 0.07;
+        curveAccent += 0.05;
+      }
+      if (/MoonJar/i.test(formType)) {
+        subsurface += 0.08;
+        glazeSoftness += 0.1;
+        veinContrast -= 0.04;
+      }
+      if (/WhitePorcelain|Baekja/i.test(formType)) {
+        glazeSheen += 0.07;
+        bodyMass -= 0.05;
+        rimGlass += 0.1;
+        subsurface += 0.06;
+        glazeSoftness += 0.06;
+      }
+      if (/Coil|StackedTier|MultiBulge/i.test(formType)) {
+        veinContrast += 0.08;
+        curveAccent += 0.06;
+      }
+
+      const seedJitter = (((meta.formSeed ?? 0) * 0.00017) % 1) - 0.5;
+      rippleScale += seedJitter * 0.04;
+
+      return {
+        glazeSheen: clampMaterial(glazeSheen),
+        bodyMass: clampMaterial(bodyMass),
+        waterFlow: clampMaterial(waterFlow),
+        veinContrast: clampMaterial(veinContrast),
+        rimGlass: clampMaterial(rimGlass),
+        subsurface: clampMaterial(subsurface),
+        curveAccent: clampMaterial(curveAccent),
+        glazeSoftness: clampMaterial(glazeSoftness),
+        dispScale: Math.min(1.14, Math.max(0.74, rippleScale))
+      };
+    }
+
+    function resolveMaterialTuning(data) {
+      return data?.material ?? DEFAULT_MATERIAL;
+    }
+
+    function lerpMaterialTuning(fromData, toData, ease) {
+      const a = resolveMaterialTuning(fromData);
+      const b = resolveMaterialTuning(toData);
+      return {
+        glazeSheen: a.glazeSheen + (b.glazeSheen - a.glazeSheen) * ease,
+        bodyMass: a.bodyMass + (b.bodyMass - a.bodyMass) * ease,
+        waterFlow: a.waterFlow + (b.waterFlow - a.waterFlow) * ease,
+        veinContrast: a.veinContrast + (b.veinContrast - a.veinContrast) * ease,
+        rimGlass: a.rimGlass + (b.rimGlass - a.rimGlass) * ease,
+        subsurface: a.subsurface + (b.subsurface - a.subsurface) * ease,
+        curveAccent: a.curveAccent + (b.curveAccent - a.curveAccent) * ease,
+        glazeSoftness: a.glazeSoftness + (b.glazeSoftness - a.glazeSoftness) * ease,
+        dispScale: a.dispScale + (b.dispScale - a.dispScale) * ease
+      };
     }
 
     function minHistorySignatureDiff(data, history = recentFormHistory) {
@@ -2554,6 +2741,25 @@
       jar.innerUniforms.uJarYMin.value = data.yMin;
       jar.innerUniforms.uJarYRange.value = data.yRange;
       jar.innerUniforms.uDispScale.value = data.dispScale * 0.32;
+      applyMaterialTuningToJar(jar, resolveMaterialTuning(data));
+    }
+
+    function applyMaterialTuningToJar(jar, mat) {
+      if (!mat || !jar?.outerUniforms?.uMatTuning) return;
+      jar.outerUniforms.uMatTuning.value.set(
+        mat.glazeSheen,
+        mat.bodyMass,
+        mat.waterFlow,
+        mat.veinContrast
+      );
+      jar.outerUniforms.uMatTuning2.value.set(
+        mat.rimGlass,
+        mat.subsurface,
+        mat.curveAccent,
+        mat.glazeSoftness
+      );
+      jar.innerUniforms.uMatTuning.value.copy(jar.outerUniforms.uMatTuning.value);
+      jar.innerUniforms.uMatTuning2.value.copy(jar.outerUniforms.uMatTuning2.value);
     }
 
     function applyShapeUniforms(jar, data) {
@@ -2570,22 +2776,26 @@
     }
 
     function applyAppearanceLerp(jar, fromData, toData, ease, startBecoming = 0.16) {
-      jar.outerUniforms.uJarYMin.value = fromData.yMin;
-      jar.outerUniforms.uJarYRange.value = fromData.yRange;
-      jar.innerUniforms.uJarYMin.value = fromData.yMin;
-      jar.innerUniforms.uJarYRange.value = fromData.yRange;
-      jar.outerUniforms.uDispScale.value = fromData.dispScale;
-      jar.innerUniforms.uDispScale.value = fromData.dispScale * 0.32;
+      const yMin = fromData.yMin + (toData.yMin - fromData.yMin) * ease;
+      const yRange = fromData.yRange + (toData.yRange - fromData.yRange) * ease;
+      const mat = lerpMaterialTuning(fromData, toData, ease);
+      const dispScale = mat.dispScale;
+      jar.outerUniforms.uJarYMin.value = yMin;
+      jar.outerUniforms.uJarYRange.value = yRange;
+      jar.innerUniforms.uJarYMin.value = yMin;
+      jar.innerUniforms.uJarYRange.value = yRange;
+      jar.outerUniforms.uDispScale.value = dispScale;
+      jar.innerUniforms.uDispScale.value = dispScale * 0.32;
+      applyMaterialTuningToJar(jar, mat);
 
-      const targetBecoming = 0.15 + ease * 0.12;
+      const targetBecoming = 0.16 + ease * 0.04;
       jar.outerUniforms.uBecoming.value = startBecoming + (targetBecoming - startBecoming) * ease;
       jar.innerUniforms.uBecoming.value = jar.outerUniforms.uBecoming.value;
     }
 
     function setMorphingState(jar, active) {
-      const value = active ? 1 : 0;
-      jar.outerUniforms.uMorphing.value = value;
-      jar.innerUniforms.uMorphing.value = value;
+      jar.outerUniforms.uMorphing.value = 0;
+      jar.innerUniforms.uMorphing.value = 0;
     }
 
     function beautyScore(data) {
@@ -2710,6 +2920,7 @@
       uniform float uJarYRange;
       uniform float uBecoming;
       uniform float uMorphing;
+      uniform float uMorphBlend;
       uniform float uStreamMode;
       varying vec3 vWorldPos;
       varying vec3 vNormal;
@@ -2725,23 +2936,22 @@
         float angMix = position.x * 0.71 + position.z * 0.53;
         vFlowCoord = flowH * 7.4 - t * 1.38 + angMix * 1.35;
 
-        float preDepth = uStreamMode > 0.5 ? vUv.y : (position.y - uJarYMin) / uJarYRange;
-        float poleFade = uStreamMode > 0.5 ? 1.0
-          : smoothstep(0.0, 0.05, preDepth) * smoothstep(1.0, 0.96, preDepth);
+        float preDepth = vUv.y;
+        float poleFade = smoothstep(0.0, 0.05, preDepth) * smoothstep(1.0, 0.96, preDepth);
 
         float downFlow = sin(flowH * 7.5 - t * 1.15 + angMix * 2.1) * 0.0018
           + sin(flowH * 12.0 - t * 1.45 + angMix * 1.4 + 1.7) * 0.001
           + sin(flowH * 4.2 - t * 0.82 + angMix * 3.3) * 0.0013;
         float ripple = downFlow
           + sin(flowH * 2.2 - t * 0.28 + angMix * 0.7) * 0.0008;
-        ripple *= poleFade * uDispScale * (0.92 + uBecoming * 0.12) * (1.0 - uMorphing * 0.88);
+        ripple *= poleFade * uDispScale * (0.92 + uBecoming * 0.12) * (1.0 - uMorphBlend * 0.85);
 
         vec3 displaced = position + normal * ripple;
         vec4 worldPos = modelMatrix * vec4(displaced, 1.0);
         vWorldPos = worldPos.xyz;
         vNormal = normalize(normalMatrix * normal);
         vViewDir = normalize(cameraPosition - worldPos.xyz);
-        vDepth = uStreamMode > 0.5 ? vUv.y : (displaced.y - uJarYMin) / uJarYRange;
+        vDepth = vUv.y;
         gl_Position = projectionMatrix * viewMatrix * worldPos;
       }
     `;
@@ -2763,10 +2973,13 @@
       uniform float uJarYRange;
       uniform float uFormSeed;
       uniform float uSurfaceType;
+      uniform vec4 uMatTuning;
+      uniform vec4 uMatTuning2;
       uniform float uAppear;
       uniform float uBirthActive;
       uniform float uBecoming;
       uniform float uMorphing;
+      uniform float uMorphBlend;
       uniform float uStreamMode;
       uniform float uStreamReveal;
       uniform float uPerfTier;
@@ -2781,17 +2994,28 @@
       varying float vFlowCoord;
 
       void main() {
-        float morphStable = 1.0 - uMorphing * 0.92;
         float t = uTime * 0.22;
         float tFlow = uTime * 0.58;
 
-        vec3 colDeep = mix(uColorDeepPrev, uColorDeep, uColorMorphT);
-        vec3 colMid = mix(uColorMidPrev, uColorMid, uColorMorphT);
-        vec3 colLight = mix(uColorLightPrev, uColorLight, uColorMorphT);
+        vec3 colDeep = uColorDeep;
+        vec3 colMid = uColorMid;
+        vec3 colLight = uColorLight;
+
+        float matSheen = mix(0.72, 1.38, uMatTuning.x);
+        float matBody = uMatTuning.y;
+        float matWater = mix(0.62, 1.45, uMatTuning.z);
+        float matVein = mix(0.7, 1.34, uMatTuning.w);
+        float matRim = mix(0.76, 1.36, uMatTuning2.x);
+        float matSub = mix(0.66, 1.4, uMatTuning2.y);
+        float matCurve = mix(0.84, 1.2, uMatTuning2.z);
+        float matSoft = uMatTuning2.w;
+        float surfScale = 0.88 + fract(uSurfaceType * 0.173 + 0.31) * 0.28;
 
         float wx = vWorldPos.x;
         float wz = vWorldPos.z;
-        float angMix = wx * 0.42 + wz * 0.58;
+        float angMixWorld = wx * 0.42 + wz * 0.58;
+        float angMixUv = vUv.x * 6.28318 + vFlowCoord * 0.06;
+        float angMix = mix(angMixWorld, angMixUv, uMorphBlend * 0.9);
         float flowH = vUv.y;
         float seed = uFormSeed * 0.002;
 
@@ -2809,16 +3033,19 @@
         vec3 baseNormal = normalize(vNormal);
 
         float baseNdotV = max(dot(baseNormal, viewDir), 0.0);
-        float thickness = clamp(vDepth * 0.9 + (1.0 - baseNdotV) * 0.38, 0.0, 1.0);
+        float stableNdotV = mix(baseNdotV, 0.38, uMorphBlend * 0.88);
+        float thickness = clamp(vDepth * 0.88 + (1.0 - stableNdotV) * 0.28, 0.0, 1.0);
+        thickness = clamp(mix(thickness, thickness * 0.74 + matBody * 0.26, 0.42), 0.0, 1.0);
         float thinness = 1.0 - thickness;
-        float fresnel = pow(1.0 - baseNdotV, 3.0);
-        float fresnelRim = pow(1.0 - baseNdotV, mix(1.6, 2.4, uMorphing));
+        float fresnel = pow(1.0 - stableNdotV, 3.0);
+        float fresnelRim = pow(1.0 - stableNdotV, 1.6);
         float poleMask = smoothstep(0.02, 0.1, vDepth) * smoothstep(0.98, 0.9, vDepth);
         float surfaceMask = clamp(fresnelRim * 0.52 + thinness * 0.48, 0.0, 1.0) * poleMask;
+        surfaceMask *= mix(1.0, matCurve, fresnelRim * 0.55);
 
         float tCeramic = uTime * 0.19;
-        float cVeinA = sin(flowH * 4.6 - tCeramic * 0.56 + angMix * 1.8 + seed * 1.35) * 0.5 + 0.5;
-        float cVeinB = sin(flowH * 7.4 - tCeramic * 0.78 + angMix * 1.15 - seed * 0.85) * 0.5 + 0.5;
+        float cVeinA = sin(flowH * 4.6 * surfScale - tCeramic * 0.56 + angMix * 1.8 + seed * 1.35) * 0.5 + 0.5;
+        float cVeinB = sin(flowH * 7.4 * surfScale - tCeramic * 0.78 + angMix * 1.15 - seed * 0.85) * 0.5 + 0.5;
         float cVeinC = sin(angMix * 3.15 + flowH * 3.35 - tCeramic * 0.46 + seed * 2.25) * 0.5 + 0.5;
         float ceramicVein = pow(cVeinA * cVeinB, 1.32) * smoothstep(0.3, 0.74, cVeinC);
 
@@ -2837,11 +3064,15 @@
         float waterVeinShadow = ceramicVein * (1.0 - ceramicStream * 0.45);
         ceramicWater *= 0.58 + thickness * 0.22 + thinness * 0.18;
         ceramicWater *= poleMask * (0.86 + uBecoming * 0.12);
+        ceramicWater *= matVein;
+        waterVeinBright *= mix(0.88, 1.18, matVein - 0.5);
+        waterVeinShadow *= mix(0.92, 1.12, matVein - 0.5);
 
         float streakA = sin(flowH * 10.5 - tFlow * 1.42 + angMix * 3.4 + seed) * 0.5 + 0.5;
         float streakB = sin(flowH * 17.0 - tFlow * 1.95 + angMix * 1.8 - seed * 1.4) * 0.5 + 0.5;
         float streakC = sin(flowH * 6.0 - tFlow * 1.05 + angMix * 4.6 + seed * 0.8) * 0.5 + 0.5;
         float rivulet = pow(streakA * streakB, 2.4) * smoothstep(0.28, 0.88, streakC);
+        rivulet *= mix(0.82, 1.18, matWater - 0.5);
 
         float flowBand = smoothstep(0.38, 0.78,
           sin(flowH * 3.6 - tFlow * 0.78 + angMix * 1.1 + seed) * 0.5 + 0.5
@@ -2854,31 +3085,38 @@
 
         float sheetA = sin(vFlowCoord * 0.85 - tFlow * 1.35 + angMix * 1.6) * 0.5 + 0.5;
         float sheetB = sin(flowH * 21.0 - tFlow * 2.4 + angMix * 3.1) * 0.5 + 0.5;
-        float wetSheet = pow(sheetA * sheetB * flowRipple, 1.65) * surfaceMask;
+        float wetSheet = pow(sheetA * sheetB * flowRipple, 1.65) * surfaceMask * matWater;
 
         float trailA = sin(flowH * 24.0 - tFlow * 2.8 + angMix * 2.4) * 0.5 + 0.5;
         float trailB = sin(vFlowCoord * 0.62 - tFlow * 1.05) * 0.5 + 0.5;
-        float waterTrail = pow(trailA * trailB, 2.1) * smoothstep(0.22, 0.82, rivulet) * surfaceMask;
+        float waterTrail = pow(trailA * trailB, 2.1) * smoothstep(0.22, 0.82, rivulet) * surfaceMask * matWater;
 
         float causticA = sin(wx * 3.4 + wz * 2.6 - tFlow * 1.15 + flowH * 5.2) * 0.5 + 0.5;
         float causticB = sin(wx * 2.2 - wz * 3.8 + tFlow * 0.95 + angMix * 2.2) * 0.5 + 0.5;
+        float causticUvA = sin(flowH * 8.2 - tFlow * 1.05 + angMix * 1.4) * 0.5 + 0.5;
+        float causticUvB = sin(flowH * 5.6 + angMix * 2.8 - tFlow * 0.82) * 0.5 + 0.5;
         float causticNet = pow(causticA * causticB, 2.4) * (0.28 + thinness * 0.42 + surfaceMask * 0.22);
+        float causticNetUv = pow(causticUvA * causticUvB, 2.2) * (0.24 + thinness * 0.36 + surfaceMask * 0.18);
+        causticNet = mix(causticNet, causticNetUv, uMorphBlend * 0.92);
 
         float flowGradV = sin(flowH * 11.5 - tFlow * 1.55 + angMix * 2.6 + seed) * rivulet;
         float flowGradA = sin(angMix * 4.2 + flowH * 8.0 - tFlow * 1.25 + seed * 1.1) * rivulet;
         float cGradV = sin(flowH * 6.1 - tCeramic * 0.62 + angMix * 2.15 + seed) * ceramicWater;
         float cGradA = sin(angMix * 3.6 + flowH * 5.2 - tCeramic * 0.52 + seed * 1.15) * ceramicWater;
+        float normalDetail = 1.0 - uMorphBlend * 0.94;
         vec3 flowNormal = baseNormal
           + vec3(
             cos(angMix) * flowGradA * 0.09 + cos(angMix * 0.85) * cGradA * 0.028,
             flowGradV * 0.05 + cGradV * 0.02 + (flowRipple - 0.5) * 0.032,
             sin(angMix) * flowGradA * 0.09 + sin(angMix * 0.85) * cGradA * 0.028
-          ) * surfaceMask * (0.62 + uBecoming * 0.14) * morphStable
-          + vec3(cos(angMix * 0.72), cGradV * 0.018, sin(angMix * 0.72)) * ceramicWater * 0.1 * morphStable;
+          ) * surfaceMask * (0.62 + uBecoming * 0.14) * normalDetail
+          + vec3(cos(angMix * 0.72), cGradV * 0.018, sin(angMix * 0.72)) * ceramicWater * 0.1 * normalDetail;
 
         vec3 n = normalize(flowNormal);
         float NdotV = max(dot(n, viewDir), 0.0);
-        float NdotL = max(dot(n, lightDir), 0.0);
+        float baseNdotL = max(dot(baseNormal, lightDir), 0.0);
+        float stableNdotL = mix(baseNdotL, 0.52, uMorphBlend * 0.9);
+        float NdotL = stableNdotL;
 
         vec3 volDeep = colDeep * vec3(0.92, 1.0, 1.02);
         vec3 volMid = colMid * vec3(0.82, 0.96, 1.0);
@@ -2901,10 +3139,10 @@
         bgThrough = mix(bgThrough, uWaterWhite, wetSheet * 0.12 + waterTrail * 0.1);
 
         float backScatter = pow(max(dot(viewDir, lightDir), 0.0), 2.4);
-        vec3 subsurface = mix(volMid, uUnderwaterHaze, 0.55) * backScatter * thinness * 0.2;
-        subsurface += volDeep * NdotL * thinness * 0.08;
-        subsurface += glazeHighlight * milkyPatch * 0.1;
-        subsurface += mix(glazeHighlight, uUnderwaterHaze, 0.5) * waterVeinBright * ceramicWater * 0.14;
+        vec3 subsurface = mix(volMid, uUnderwaterHaze, 0.55) * backScatter * thinness * 0.2 * matSub;
+        subsurface += volDeep * NdotL * thinness * 0.08 * matSub;
+        subsurface += glazeHighlight * milkyPatch * 0.1 * matSub;
+        subsurface += mix(glazeHighlight, uUnderwaterHaze, 0.5) * waterVeinBright * ceramicWater * 0.14 * matSub;
 
         vec3 scatter = volMid * (0.045 + thickness * 0.065);
         scatter += mix(volDeep, volMid, 0.45) * waterVeinShadow * ceramicWater * 0.055;
@@ -2913,15 +3151,15 @@
         vec3 halfDir = normalize(lightDir + viewDir);
         float specNdotH = max(dot(baseNormal, halfDir), 0.0);
         specNdotH = specNdotH * specNdotH * (3.0 - 2.0 * specNdotH);
-        float spec = pow(specNdotH, 32.0) * fresnelRim * 0.05 * morphStable;
-        float flowSpec = pow(specNdotH, 22.0) * (rivulet * 0.55 + wetSheet * 0.85 + waterTrail * 0.65) * surfaceMask * 0.14;
-        flowSpec += pow(specNdotH, 18.0) * flowBand * surfaceMask * 0.06;
-        flowSpec *= morphStable;
-        float ceramicSpec = pow(specNdotH, 22.0) * waterVeinBright * ceramicWater * 0.05;
-        ceramicSpec += pow(specNdotH, 28.0) * causticNet * 0.08;
-        float caustic = pow(max(dot(baseNormal, lightDir), 0.0), 2.6)
-          * (0.04 + causticNet * 0.12 + wetSheet * 0.08);
-        caustic *= morphStable;
+        float specPower = mix(32.0, 18.0, matSoft);
+        float flowSpecPower = mix(22.0, 14.0, matSoft * 0.75);
+        float spec = pow(specNdotH, specPower) * fresnelRim * 0.05 * normalDetail * matSheen;
+        float flowSpec = pow(specNdotH, flowSpecPower) * (rivulet * 0.55 + wetSheet * 0.85 + waterTrail * 0.65) * surfaceMask * 0.14 * normalDetail * matSheen;
+        flowSpec += pow(specNdotH, mix(18.0, 12.0, matSoft * 0.6)) * flowBand * surfaceMask * 0.06 * normalDetail * matSheen;
+        float ceramicSpec = pow(specNdotH, flowSpecPower) * waterVeinBright * ceramicWater * 0.05 * normalDetail * matSheen;
+        ceramicSpec += pow(specNdotH, mix(28.0, 20.0, matSoft * 0.5)) * causticNet * 0.08 * normalDetail * matSheen;
+        float caustic = pow(stableNdotL, 2.6)
+          * (0.04 + causticNet * 0.12 + wetSheet * 0.08) * normalDetail;
 
         vec3 color = bgThrough + scatter + subsurface;
         color += spec * mix(uCeladonHighlight, volLight, 0.5);
@@ -2934,12 +3172,13 @@
         color += mix(uCeladonHighlight, uWaterWhite, 0.55) * rivulet * surfaceMask * 0.16;
         color += uUnderwaterHaze * spiralFlow * surfaceMask * 0.08;
         color = mix(color, mix(uWaterWhite, glazeHighlight, 0.48), flowBand * surfaceMask * 0.14);
-        color = mix(color, mix(uWaterWhite, volLight, 0.55), fresnel * 0.22 * morphStable);
-        color = mix(color, volMid, thinness * 0.05);
+        color = mix(color, mix(uWaterWhite, volLight, 0.55), fresnel * 0.22 * matRim);
+        color = mix(color, volMid, thinness * 0.05 * (1.0 - uMorphBlend * 0.85));
         color = color / (color + vec3(0.04));
 
-        float alpha = mix(0.08, 0.62, fresnel);
-        alpha += thickness * 0.28;
+        float alphaFresnel = mix(fresnel, pow(1.0 - 0.38, 3.0), uMorphBlend * 0.82);
+        float alpha = mix(0.08, 0.62, alphaFresnel);
+        alpha += thickness * 0.28 * mix(0.88, 1.12, matBody);
         alpha -= milkyPatch * thinness * 0.08;
         alpha += rivulet * surfaceMask * 0.05;
         alpha += wetSheet * 0.06;
@@ -3036,7 +3275,10 @@
         uJarYRange: { value: yRange },
         uFormSeed: { value: formSeed },
         uSurfaceType: { value: surfaceType },
+        uMatTuning: { value: new THREE.Vector4(0.52, 0.48, 0.5, 0.46) },
+        uMatTuning2: { value: new THREE.Vector4(0.44, 0.5, 0.48, 0.42) },
         uMorphing: { value: 0 },
+        uMorphBlend: { value: 0 },
         uBirthProgress: { value: 1 },
         uBirthSpiralTurns: { value: BIRTH_SPIRAL_TURNS },
         uBirthActive: { value: 0 },
@@ -3321,6 +3563,7 @@
         activeColorShift: 0.5
       };
       lockJarColors(jar, 0.5);
+      applyMaterialTuningToJar(jar, resolveMaterialTuning(initialData));
       return jar;
     }
 
@@ -3411,6 +3654,7 @@
     let currentForm = null;
     let morphState = null;
     let morphTimer = null;
+    let morphLightingEase = 0;
     const morphPrefetch = { target: null, gen: -1, busy: false };
     const morphScratch = {
       profile: [],
@@ -3508,7 +3752,7 @@
       if (geoDue) {
         applyProfileGeometryToJar(morphJar, morphScratch.geo, morphScratch.inner, {
           skipInner: true,
-          smoothNormals: 0.5
+          smoothNormals: 0.82
         });
         perf.lastGeoUpdate = now;
       }
@@ -3522,8 +3766,6 @@
       morphJar.innerUniforms.uBirthActive.value = 0;
 
       if (rawT >= 1) {
-        lerpProfileInto(from, to, 1, morphScratch.profile, fromProfile, toProfile);
-        applyProfileGeometryToJar(morphJar, morphScratch.geo, morphScratch.inner, { skipInner: true });
         currentForm = {
           ...to,
           profile: morphScratch.profile.map((p) => p.clone()),
@@ -3532,14 +3774,14 @@
           yMin: morphScratch.geo.yMin,
           yRange: morphScratch.geo.yRange
         };
-        applyGeometryUniforms(morphJar, currentForm);
-        delete morphJar.outer.geometry.userData.prevNormalArray;
-        setMorphingState(morphJar, false);
-        morphJar.outerUniforms.uBirthActive.value = 0;
-        morphJar.innerUniforms.uBirthActive.value = 0;
-        morphJar.outerUniforms.uBirthProgress.value = 1;
-        morphJar.innerUniforms.uBirthProgress.value = 1;
+        morphJar.meniscus.position.y = currentForm.mouthY;
+        morphJar.meniscus.scale.set(
+          (currentForm.mouthR / morphJar.baseMouthR) * 0.82,
+          (currentForm.mouthR / morphJar.baseMouthR) * 0.82,
+          1
+        );
         morphState = null;
+        morphLightingEase = 1;
         rememberForm(currentForm);
         morphTimer = setTimeout(scheduleNextMorph, HOLD_DURATION * 1000);
         prefetchNextMorph();
@@ -3560,13 +3802,6 @@
       const fromProfile = currentForm.profile.map((p) => p.clone());
       const toProfile = targetForm.processedProfile
         || processMorphEndpointProfile(targetForm.profile.map((p) => p.clone()));
-      beginColorMorph(morphJar, morphJar.activeColorShift ?? 0.5);
-      delete morphJar.outer.geometry.userData.prevNormalArray;
-      setMorphingState(morphJar, true);
-      morphJar.outerUniforms.uBirthActive.value = 0;
-      morphJar.innerUniforms.uBirthActive.value = 0;
-      morphJar.outerUniforms.uBirthProgress.value = 1;
-      morphJar.innerUniforms.uBirthProgress.value = 1;
       perf.lastGeoUpdate = 0;
       morphState = {
         from: currentForm,
@@ -3578,6 +3813,9 @@
         startBecoming: morphJar.outerUniforms.uBecoming.value,
         prefetchQueued: false
       };
+      morphLightingEase = 1;
+      morphJar.outerUniforms.uMorphBlend.value = 1;
+      morphJar.innerUniforms.uMorphBlend.value = 1;
       prefetchNextMorph();
     }
 
@@ -3632,7 +3870,11 @@
         perf.flowTime += (targetT - perf.flowTime) * (1 - Math.exp(-dt * 4.8));
         morphJar.outerUniforms.uTime.value = perf.flowTime;
         morphJar.outerUniforms.uLightPos.value.copy(surfaceLight.position);
-        perf.geoInterval = morphState ? 28 : 32;
+        perf.geoInterval = morphState ? 36 : 32;
+        const morphBlendTarget = morphState ? 1 : 0;
+        morphLightingEase += (morphBlendTarget - morphLightingEase) * (1 - Math.exp(-dt * (morphState ? 14 : 5.5)));
+        morphJar.outerUniforms.uMorphBlend.value = morphLightingEase;
+        morphJar.innerUniforms.uMorphBlend.value = morphLightingEase;
         if (!morphState && !birthState) {
           morphJar.outerUniforms.uBecoming.value = idleBecomingValue(elapsed);
           morphJar.innerUniforms.uBecoming.value = morphJar.outerUniforms.uBecoming.value;
