@@ -410,6 +410,78 @@
       return smoothPotteryProfile(out);
     }
 
+    function profileThinGirthScore(profile) {
+      const n = profile.length;
+      if (n < 10) return 0;
+      let maxR = 0;
+      for (const p of profile) maxR = Math.max(maxR, p.x);
+
+      const start = Math.floor(n * 0.1);
+      const end = Math.floor(n * 0.9);
+      let minR = Infinity;
+      let thinCount = 0;
+      let maxThinRun = 0;
+      let run = 0;
+
+      for (let i = start; i <= end; i++) {
+        const r = profile[i].x;
+        minR = Math.min(minR, r);
+        const rNorm = r / Math.max(maxR, 0.01);
+        if (rNorm < 0.46) {
+          thinCount++;
+          run++;
+          maxThinRun = Math.max(maxThinRun, run);
+        } else {
+          run = 0;
+        }
+      }
+
+      let score = 0;
+      const minRatio = minR / Math.max(maxR, 0.01);
+      if (minRatio < 0.5) score += (0.5 - minRatio) * 3.4;
+      if (minRatio < 0.36) score += 0.32;
+
+      const span = end - start + 1;
+      const thinRatio = thinCount / span;
+      if (thinRatio > 0.1) score += (thinRatio - 0.1) * 4.8;
+
+      const runRatio = maxThinRun / n;
+      if (runRatio > 0.1) score += (runRatio - 0.1) * 16;
+      return Math.min(1, score);
+    }
+
+    function collapseThinRuns(profile, thinThreshold = 0.38, minRunLength = 11, targetRatio = 0.52) {
+      const out = profile.map((p) => p.clone());
+      const n = out.length;
+      let maxR = 0;
+      for (const p of out) maxR = Math.max(maxR, p.x);
+      const targetR = maxR * targetRatio;
+
+      const inflateRun = (runStart, runEnd) => {
+        const len = runEnd - runStart;
+        if (len < minRunLength) return;
+        for (let j = runStart; j < runEnd; j++) {
+          const t = (j - runStart) / Math.max(len - 1, 1);
+          const bell = 0.84 + Math.sin(t * Math.PI) * 0.16;
+          out[j].x = Math.max(out[j].x, targetR * bell);
+        }
+      };
+
+      let runStart = -1;
+      for (let i = 0; i < n; i++) {
+        const thin = out[i].x / Math.max(maxR, 0.01) < thinThreshold;
+        if (thin) {
+          if (runStart < 0) runStart = i;
+        } else if (runStart >= 0) {
+          inflateRun(runStart, i);
+          runStart = -1;
+        }
+      }
+      if (runStart >= 0) inflateRun(runStart, n);
+
+      return smoothSculpturalProfile(out, 1);
+    }
+
     function profileSpikiness(profile) {
       let inflect = 0;
       for (let i = 2; i < profile.length; i++) {
@@ -430,6 +502,88 @@
       return maxJump;
     }
 
+    function profileCurveBeautyScore(profile) {
+      const n = profile.length;
+      if (n < 12) return 0;
+      let maxR = 0;
+      for (const p of profile) maxR = Math.max(maxR, p.x);
+
+      let inflectSignChanges = 0;
+      let prevSign = 0;
+      let curvatureSum = 0;
+      let smoothSlopeSum = 0;
+      let peaks = 0;
+      let valleys = 0;
+
+      for (let i = 2; i < n - 2; i++) {
+        const d1 = profile[i].x - profile[i - 1].x;
+        const d0 = profile[i - 1].x - profile[i - 2].x;
+        const curv = d1 - d0;
+        curvatureSum += Math.abs(curv);
+
+        const sign = curv > 0.0008 ? 1 : curv < -0.0008 ? -1 : 0;
+        if (sign !== 0 && prevSign !== 0 && sign !== prevSign) inflectSignChanges++;
+        if (sign !== 0) prevSign = sign;
+
+        const r = profile[i].x;
+        if (r > profile[i - 1].x && r > profile[i + 1].x && r > maxR * 0.32) peaks++;
+        if (r < profile[i - 1].x && r < profile[i + 1].x && r > maxR * 0.1) valleys++;
+
+        const slope = Math.abs(d1) / Math.max(maxR, 0.01);
+        if (slope > 0.002 && slope < 0.06) smoothSlopeSum++;
+      }
+
+      const curvNorm = curvatureSum / Math.max(n, 1);
+      const slopeRatio = smoothSlopeSum / Math.max(n - 4, 1);
+
+      let score = 0;
+      if (curvNorm >= 0.0045 && curvNorm <= 0.042) score += 0.4;
+      else score += Math.max(0, 0.3 - Math.abs(curvNorm - 0.02) * 5.5);
+
+      if (inflectSignChanges >= 2 && inflectSignChanges <= 9) score += 0.34;
+      else if (inflectSignChanges >= 1) score += 0.14;
+
+      if (peaks >= 1 && peaks <= 4) score += 0.24;
+      if (valleys >= 1 && valleys <= 5) score += 0.2;
+      score += slopeRatio * 0.38;
+
+      const jump = profileMaxAngularJump(profile);
+      if (jump < 0.004) score += 0.22;
+      else if (jump < 0.0065) score += 0.1;
+      else score -= (jump - 0.0065) * 10;
+
+      score -= profileBoxinessScore(profile) * 0.85;
+      score -= profileShoulderCornerPenalty(profile) * 0.35;
+      return Math.min(1, Math.max(0, score));
+    }
+
+    function enrichCeramicCurves(profile, rng, intensity = 0.55) {
+      const rand = rng;
+      const out = profile.map((p) => p.clone());
+      const n = out.length;
+      let maxR = 0;
+      for (const p of out) maxR = Math.max(maxR, p.x);
+
+      const h1 = 0.85 + rand() * 1.8;
+      const h2 = 1.35 + rand() * 2.4;
+      const h3 = 2.1 + rand() * 2.8;
+      const ph1 = rand() * Math.PI * 2;
+      const ph2 = rand() * Math.PI * 2;
+      const ph3 = rand() * Math.PI * 2;
+      const amp = (0.014 + rand() * 0.026) * intensity * maxR;
+
+      for (let i = 0; i < n; i++) {
+        const t = i / (n - 1);
+        if (t < 0.035 || t > 0.965) continue;
+        const bell = Math.sin(t * Math.PI);
+        const wave = Math.sin(t * Math.PI * h1 + ph1) * 0.5
+          + Math.sin(t * Math.PI * h2 + ph2) * 0.32
+          + Math.sin(t * Math.PI * h3 + ph3) * 0.18;
+        out[i].x = Math.max(out[i].x + wave * amp * bell, maxR * 0.07);
+      }
+      return smoothSculpturalProfile(out, 1);
+    }
+
     function smoothPotteryProfile(profile) {
       let p = smoothSculpturalProfile(profile, 3);
       p = capProfileSlopes(p, 0.005);
@@ -439,10 +593,13 @@
     }
 
     function refineProfileSilhouette(profile, isCultural) {
-      let p = smoothSculpturalProfile(profile, isCultural ? 3 : 2);
-      p = capProfileSlopes(p, isCultural ? 0.006 : 0.014);
-      p = smoothSculpturalProfile(p, isCultural ? 2 : 1);
-      if (isCultural) p = smoothPotteryProfile(p);
+      let p = smoothSculpturalProfile(profile, isCultural ? 2 : 2);
+      p = capProfileSlopes(p, isCultural ? 0.0085 : 0.014);
+      p = smoothSculpturalProfile(p, isCultural ? 1 : 1);
+      if (isCultural) {
+        p = capProfileSlopes(p, 0.0065);
+        p = smoothSculpturalProfile(p, 1);
+      }
       return p;
     }
 
@@ -578,8 +735,21 @@
         else break;
       }
       const spindleRatio = spindlePoints / Math.max(n, 1);
-      if (spindleRatio <= 0.08) return 0;
-      return (spindleRatio - 0.08) * 18;
+      let penalty = 0;
+      if (spindleRatio > 0.08) penalty += (spindleRatio - 0.08) * 18;
+
+      let maxRun = 0;
+      let run = 0;
+      for (let i = Math.floor(n * 0.08); i <= Math.floor(n * 0.9); i++) {
+        if (profile[i].x / Math.max(maxR, 0.01) < 0.42) {
+          run++;
+          maxRun = Math.max(maxRun, run);
+        } else {
+          run = 0;
+        }
+      }
+      if (maxRun / n > 0.1) penalty += (maxRun / n - 0.1) * 18;
+      return penalty;
     }
 
     function applyCeramicMouth(profile, rng) {
@@ -680,16 +850,16 @@
       const n = out.length;
       let maxR = 0;
       for (const p of out) maxR = Math.max(maxR, p.x);
-      const midStart = Math.floor(n * 0.26);
-      const midEnd = Math.floor(n * 0.74);
+      const midStart = Math.floor(n * 0.22);
+      const midEnd = Math.floor(n * 0.78);
       let waistR = Infinity;
       for (let i = midStart; i <= midEnd; i++) waistR = Math.min(waistR, out[i].x);
-      if (waistR >= maxR * minWaistRatio) return out;
+      if (waistR >= maxR * minWaistRatio) return collapseThinRuns(out);
       const targetWaist = maxR * minWaistRatio;
       for (let i = midStart; i <= midEnd; i++) {
         out[i].x = Math.max(out[i].x, targetWaist);
       }
-      return smoothSculpturalProfile(out, 1);
+      return collapseThinRuns(smoothSculpturalProfile(out, 1));
     }
 
     function ensureCeramicSilhouette(profile, rng, isCultural = false) {
@@ -697,12 +867,15 @@
       p = applyCeramicBase(p, rng);
       p = syncBaseWithBody(p);
       p = refineProfileSilhouette(p, isCultural);
-      p = softenWaistPinch(p, isCultural ? 0.82 : 0.76);
+      p = softenWaistPinch(p, isCultural ? 0.74 : 0.72);
       if (profileCapsuleScore(p) > MAX_CAPSULE_SCORE || profileSlendernessScore(p) > MAX_SLENDERNESS_SCORE) {
         p = applyCeramicMouth(refineProfileSilhouette(profile, true), rng);
         p = applyCeramicBase(p, rng);
         p = syncBaseWithBody(p);
+        p = softenWaistPinch(p, isCultural ? 0.74 : 0.72);
       }
+      if (isCultural) p = enrichCeramicCurves(p, rng, 0.74);
+      if (isCultural) p = collapseThinRuns(p);
       if (isCultural) p = relaxBoxyWalls(p);
       if (isCultural) p = smoothPotteryProfile(p);
       return p;
@@ -712,29 +885,63 @@
     const CANONICAL_Y_MIN = -0.5;
     const CANONICAL_Y_MAX = 0.5;
     const SKY_BLUE = new THREE.Color(0x87CEEB);
-    const CERAMIC_DEEP = new THREE.Color(0x124058);
-    const CERAMIC_MID = new THREE.Color(0x286880);
-    const CERAMIC_LIGHT = new THREE.Color(0x68a8c8);
-    const WATER_WHITE = new THREE.Color(0xeaf6fc);
-    const UNDERWATER_HAZE = new THREE.Color(0xc8e6f4);
+    const CERAMIC_DEEP = new THREE.Color(0x0c3048);
+    const CERAMIC_MID = new THREE.Color(0x1a5878);
+    const CERAMIC_LIGHT = new THREE.Color(0x4898b8);
+    const WATER_WHITE = new THREE.Color(0xd8eef8);
+    const UNDERWATER_HAZE = new THREE.Color(0x9ec8dc);
+    const CELADON_HIGHLIGHT = new THREE.Color(0xb8dce8);
 
     const FORM_ARCHETYPES = [
       { id: 'MoonJar', label: '달항아리', tier: 'cultural' },
       { id: 'Maebyeong', label: '매병', tier: 'cultural' },
       { id: 'WhitePorcelain', label: '조선백자', tier: 'cultural' },
+      { id: 'StackedTier', label: '층형', tier: 'sculptural' },
+      { id: 'AmphoraCeramic', label: '암포라', tier: 'sculptural' },
+      { id: 'SquatBowl', label: '완형', tier: 'sculptural' },
+      { id: 'CoilStack', label: '층띠', tier: 'sculptural' },
+      { id: 'MultiBulge', label: '돌출', tier: 'sculptural' },
+      { id: 'TaperDream', label: '몽환', tier: 'sculptural' },
+      { id: 'FlaredRim', label: '플레어레', tier: 'sculptural' },
+      { id: 'DiscNeck', label: '디스크목', tier: 'sculptural' },
+      { id: 'PearGourd', label: '배형', tier: 'sculptural' },
+      { id: 'WaistFlare', label: '허리플레어', tier: 'sculptural' },
+      { id: 'PedestalBowl', label: '받침볼', tier: 'sculptural' },
+      { id: 'WideShoulder', label: '넓은어깨', tier: 'sculptural' },
+      { id: 'OpenBowl', label: '귀그릇', tier: 'sculptural' },
       { id: 'FluidVessel', label: '유동', tier: 'experimental' },
-      { id: 'CoilStack', label: '층띠', tier: 'experimental' },
       { id: 'PinchMorph', label: '핀치', tier: 'experimental' },
       { id: 'SlumpFlow', label: '슬럼프', tier: 'experimental' },
-      { id: 'MultiBulge', label: '돌출', tier: 'experimental' },
-      { id: 'TaperDream', label: '몽환', tier: 'experimental' },
       { id: 'NoiseBloom', label: '개화', tier: 'experimental' }
     ];
 
     const MORPH_NARRATIVE = FORM_ARCHETYPES.map((a) => a.id);
     const CULTURAL_ROUND_ARCHETYPES = ['MoonJar', 'Maebyeong', 'WhitePorcelain'];
+    const SCULPTURAL_ROUND_ARCHETYPES = [
+      'StackedTier', 'CoilStack', 'MultiBulge', 'AmphoraCeramic', 'SquatBowl', 'TaperDream',
+      'FlaredRim', 'DiscNeck', 'PearGourd', 'WaistFlare', 'PedestalBowl', 'WideShoulder', 'OpenBowl'
+    ];
+    const MORPH_ARCHETYPE_POOL = [...CULTURAL_ROUND_ARCHETYPES, ...SCULPTURAL_ROUND_ARCHETYPES];
     const CLASSIC_CULTURAL_ROTATION = ['MoonJar', 'Maebyeong', 'WhitePorcelain'];
-    const CLASSIC_MOJAR_INTERVAL = 1;
+    const CLASSIC_MOJAR_INTERVAL = 13;
+
+    function isSculpturalPotteryType(formType) {
+      if (!formType) return false;
+      if (formType === '__SCULPTURAL__') return true;
+      if (SCULPTURAL_ROUND_ARCHETYPES.includes(formType)) return true;
+      if (String(formType).startsWith('Hybrid:')) {
+        return String(formType).replace('Hybrid:', '').split('/')
+          .some((id) => SCULPTURAL_ROUND_ARCHETYPES.includes(id));
+      }
+      return false;
+    }
+
+    function resolveMorphArchetypeId(forcedArchetypeId, rand) {
+      if (forcedArchetypeId === '__SCULPTURAL__') {
+        return SCULPTURAL_ROUND_ARCHETYPES[Math.floor(rand() * SCULPTURAL_ROUND_ARCHETYPES.length)];
+      }
+      return forcedArchetypeId;
+    }
 
     function profilePeakCenter(profile) {
       let maxR = 0;
@@ -793,7 +1000,7 @@
 
       let score = 0;
       if (shoulderCenter >= 0.62 && shoulderCenter <= 0.86) score += 0.38;
-      if (fullness >= 1.35 && fullness <= 2.6) score += 0.34;
+      if (fullness >= 1.35 && fullness <= 3.2) score += 0.38;
       if (mouthRatio >= 0.22 && mouthRatio <= 0.48) score += 0.18;
       if (baseRatio >= 0.14 && baseRatio <= 0.42) score += 0.16;
       score += Math.max(0, 0.22 - profileSpikiness(profile) * 5.2);
@@ -812,7 +1019,7 @@
 
       let score = 0;
       if (shoulderCenter >= 0.5 && shoulderCenter <= 0.7) score += 0.32;
-      if (fullness >= 1.12 && fullness <= 1.55) score += 0.28;
+      if (fullness >= 1.08 && fullness <= 1.65) score += 0.32;
       if (mouthRatio >= 0.28 && mouthRatio <= 0.52) score += 0.18;
       if (baseRatio >= 0.22 && baseRatio <= 0.52) score += 0.16;
       score += profileCapsuleScore(profile) * 0.12;
@@ -820,12 +1027,42 @@
       return Math.min(1, score);
     }
 
+    function profileSculpturalScore(profile) {
+      const n = profile.length;
+      if (n < 8) return 0;
+      const { maxR, fullness } = profileWaistFullness(profile);
+      let peaks = 0;
+      for (let i = 2; i < n - 2; i++) {
+        const r = profile[i].x;
+        if (r > profile[i - 1].x && r > profile[i + 1].x && r > maxR * 0.52) peaks++;
+      }
+      const curveBeauty = profileCurveBeautyScore(profile);
+      let score = curveBeauty * 0.52;
+      if (peaks >= 2 && peaks <= 4) score += 0.34;
+      else if (peaks === 1) score += 0.16;
+      if (fullness >= 1.12 && fullness <= 3.8) score += 0.22;
+      score += Math.max(0, 0.18 - profileSpikiness(profile) * 4.2);
+      score -= profileBoxinessScore(profile) * 0.35;
+      return Math.min(1, Math.max(0, score));
+    }
+
     function culturalProfileScore(data) {
       const type = data.formType;
-      if (type === 'Maebyeong') return profileMaebyeongScore(data.profile);
-      if (type === 'WhitePorcelain') return profileBaekjaScore(data.profile);
-      if (type === 'MoonJar') return profileMoonJarScore(data.profile);
-      return profileMoonJarScore(data.profile) * 0.35;
+      if (isSculpturalPotteryType(type)) {
+        return Math.min(1, profileSculpturalScore(data.profile) * 0.78
+          + profileCurveBeautyScore(data.profile) * 0.22);
+      }
+      let score = 0;
+      if (type === 'Maebyeong') score = profileMaebyeongScore(data.profile);
+      else if (type === 'WhitePorcelain') score = profileBaekjaScore(data.profile);
+      else if (type === 'MoonJar') score = profileMoonJarScore(data.profile);
+      else if (type.startsWith('Hybrid:')) {
+        score = profileSculpturalScore(data.profile) * 0.42
+          + profileMoonJarScore(data.profile) * 0.18
+          + profileCurveBeautyScore(data.profile) * 0.4;
+      } else score = profileMoonJarScore(data.profile) * 0.35;
+      score = score * 0.72 + profileCurveBeautyScore(data.profile) * 0.28;
+      return Math.min(1, score);
     }
 
     function moonJarRadius(t, baseR, rand, formSeed) {
@@ -975,11 +1212,16 @@
 
     function coilStackRadius(t, baseR, rand, formSeed) {
       const coils = 2 + Math.floor(rand() * 3);
-      let r = baseR * (0.22 + 0.78 * Math.pow(Math.sin(t * Math.PI), 0.42 + rand() * 0.3));
-      r += baseR * 0.035 * Math.sin(t * Math.PI * coils + formSeed * 0.008);
-      r += baseR * 0.02 * Math.cos(t * Math.PI * (coils * 0.55) - formSeed * 0.005);
-      if (rand() < 0.45) r *= pinchEnvelope(t, 0.4 + rand() * 0.3, 0.12, 0.1 + rand() * 0.08);
-      return finishVesselRadius(t, r, baseR, rand);
+      let r = baseR * (0.26 + 0.74 * Math.pow(Math.sin(t * Math.PI), 0.48 + rand() * 0.22));
+      r += baseR * 0.028 * Math.sin(t * Math.PI * coils + formSeed * 0.008) * Math.sin(t * Math.PI);
+      r += baseR * 0.016 * Math.cos(t * Math.PI * (coils * 0.55) - formSeed * 0.005) * Math.sin(t * Math.PI);
+      if (rand() < 0.42) r *= pinchEnvelope(t, 0.38 + rand() * 0.28, 0.11, 0.09 + rand() * 0.07);
+      if (t < 0.1) r *= 0.7 + t * 2.6;
+      return finishVesselRadius(t, r, baseR, rand, {
+        neckStart: 0.84 + rand() * 0.03,
+        mouthRatio: 0.34 + rand() * 0.08,
+        lipFlare: 1.008 + rand() * 0.018
+      });
     }
 
     function pinchMorphRadius(t, baseR, rand, formSeed) {
@@ -1004,14 +1246,202 @@
     }
 
     function multiBulgeRadius(t, baseR, rand, formSeed) {
-      let r = baseR * (0.3 + rand() * 0.18);
+      let r = baseR * (0.28 + rand() * 0.14);
       const count = 2 + Math.floor(rand() * 3);
       for (let i = 0; i < count; i++) {
-        r += baseR * gaussianBump(t, 0.12 + rand() * 0.7, 0.12 + rand() * 0.08, 0.1 + rand() * 0.12);
+        r += baseR * gaussianBump(
+          t,
+          0.14 + (i + rand() * 0.18) * (0.72 / count),
+          0.1 + rand() * 0.06,
+          0.1 + rand() * 0.1
+        );
       }
-      if (rand() < 0.55) r *= pinchEnvelope(t, 0.4 + rand() * 0.25, 0.11, 0.1 + rand() * 0.1);
-      r += baseR * 0.03 * Math.sin(t * Math.PI * (1.5 + rand() * 1.5) + formSeed * 0.012);
-      return finishVesselRadius(t, r, baseR, rand);
+      if (rand() < 0.5) r *= pinchEnvelope(t, 0.36 + rand() * 0.28, 0.1, 0.08 + rand() * 0.08);
+      r += baseR * 0.022 * Math.sin(t * Math.PI * (1.2 + rand() * 1.2) + formSeed * 0.012) * Math.sin(t * Math.PI);
+      if (t < 0.1) r *= 0.72 + t * 2.4;
+      return finishVesselRadius(t, r, baseR, rand, {
+        neckStart: 0.82 + rand() * 0.04,
+        mouthRatio: 0.3 + rand() * 0.1,
+        lipFlare: 1.01 + rand() * 0.02
+      });
+    }
+
+    function stackedTierRadius(t, baseR, rand, formSeed) {
+      const tiers = 2 + Math.floor(rand() * 3);
+      let r = baseR * (0.26 + rand() * 0.1);
+      for (let i = 0; i < tiers; i++) {
+        const center = 0.14 + ((i + 0.5) / tiers) * 0.68 + (rand() - 0.5) * 0.035;
+        r += baseR * gaussianBump(t, center, 0.085 + rand() * 0.045, 0.11 + rand() * 0.12);
+      }
+      if (rand() < 0.48) {
+        r *= pinchEnvelope(t, 0.32 + rand() * 0.38, 0.085 + rand() * 0.035, 0.07 + rand() * 0.06);
+      }
+      if (t > 0.8) {
+        const nt = (t - 0.8) / 0.2;
+        r *= 1 - nt * nt * (0.46 + rand() * 0.1);
+      }
+      if (t < 0.1) r *= 0.74 + t * 2.2;
+      return finishVesselRadius(t, r, baseR, rand, {
+        neckStart: 0.835 + rand() * 0.035,
+        mouthRatio: 0.32 + rand() * 0.09,
+        lipFlare: 1.009 + rand() * 0.018
+      });
+    }
+
+    function amphoraCeramicRadius(t, baseR, rand, formSeed) {
+      const bodyPeak = 0.36 + rand() * 0.14;
+      const bodyWidth = 0.2 + rand() * 0.05;
+      let r = baseR * (0.15 + 0.76 * Math.exp(-Math.pow((t - bodyPeak) / bodyWidth, 2)));
+      r += baseR * 0.015 * Math.sin(t * Math.PI * (4.5 + rand() * 3.5) + formSeed * 0.005) * Math.sin(t * Math.PI);
+      if (t > 0.7) {
+        const nt = (t - 0.7) / 0.3;
+        r *= 1 - nt * nt * (0.52 + rand() * 0.1);
+      }
+      if (t < 0.08) {
+        const ft = t / 0.08;
+        r *= 0.8 + 0.2 * Math.sin(ft * Math.PI * 0.5);
+      }
+      return finishVesselRadius(t, r, baseR, rand, {
+        neckStart: 0.775 + rand() * 0.035,
+        mouthRatio: 0.26 + rand() * 0.08,
+        lipFlare: 1.008 + rand() * 0.016
+      });
+    }
+
+    function squatBowlRadius(t, baseR, rand, formSeed) {
+      const rim = 0.86 + rand() * 0.08;
+      const rimWidth = 0.075 + rand() * 0.035;
+      let r = baseR * (0.5 + 0.5 * Math.exp(-Math.pow((t - rim) / rimWidth, 2)));
+      r += baseR * gaussianBump(t, 0.52 + rand() * 0.18, 0.16 + rand() * 0.07, 0.07 + rand() * 0.05);
+      if (t < 0.14) {
+        const bt = t / 0.14;
+        r *= 0.74 + 0.26 * Math.pow(bt, 0.62);
+      }
+      return finishVesselRadius(t, r, baseR, rand, {
+        neckStart: 0.915 + rand() * 0.02,
+        mouthRatio: 0.68 + rand() * 0.14,
+        lipFlare: 1.012 + rand() * 0.022
+      });
+    }
+
+    function flaredRimVesselRadius(t, baseR, rand, formSeed) {
+      const belly = 0.4 + rand() * 0.14;
+      let r = baseR * (0.16 + 0.7 * Math.exp(-Math.pow((t - belly) / (0.2 + rand() * 0.06), 2)));
+      r += baseR * gaussianBump(t, 0.66 + rand() * 0.1, 0.065 + rand() * 0.03, 0.12 + rand() * 0.1);
+      if (t > 0.56) {
+        const nt = (t - 0.56) / 0.44;
+        r *= 0.44 + (1 - nt) * (1 - nt) * 0.34;
+      }
+      if (t > 0.86) {
+        const rt = (t - 0.86) / 0.14;
+        r += baseR * (0.24 + rand() * 0.14) * Math.sin(rt * Math.PI * 0.5);
+      }
+      if (t < 0.1) r *= 0.76 + t * 2.1;
+      return finishVesselRadius(t, r, baseR, rand, {
+        neckStart: 0.865 + rand() * 0.03,
+        mouthRatio: 0.52 + rand() * 0.16,
+        lipFlare: 1.04 + rand() * 0.035
+      });
+    }
+
+    function discNeckVesselRadius(t, baseR, rand, formSeed) {
+      let r = baseR * (0.14 + rand() * 0.08);
+      r += baseR * gaussianBump(t, 0.2 + rand() * 0.12, 0.13 + rand() * 0.05, 0.3 + rand() * 0.12);
+      r += baseR * gaussianBump(t, 0.36 + rand() * 0.1, 0.095 + rand() * 0.045, 0.16 + rand() * 0.08);
+      if (t > 0.46) {
+        const nt = (t - 0.46) / 0.54;
+        r *= 1 - nt * nt * (0.6 + rand() * 0.12);
+      }
+      if (t < 0.08) r *= 0.7 + t * 3.0;
+      return finishVesselRadius(t, r, baseR, rand, {
+        neckStart: 0.775 + rand() * 0.04,
+        mouthRatio: 0.2 + rand() * 0.08,
+        lipFlare: 1.007 + rand() * 0.014
+      });
+    }
+
+    function pearGourdVesselRadius(t, baseR, rand, formSeed) {
+      let r = baseR * gaussianBump(t, 0.11 + rand() * 0.07, 0.095 + rand() * 0.04, 0.2 + rand() * 0.08);
+      r *= pinchEnvelope(t, 0.21 + rand() * 0.06, 0.065 + rand() * 0.025, 0.11 + rand() * 0.07);
+      r += baseR * gaussianBump(t, 0.56 + rand() * 0.16, 0.14 + rand() * 0.06, 0.26 + rand() * 0.1);
+      if (t > 0.8) {
+        const nt = (t - 0.8) / 0.2;
+        r *= 1 - nt * nt * (0.42 + rand() * 0.1);
+      }
+      if (t < 0.08) r *= 0.74 + t * 2.6;
+      return finishVesselRadius(t, r, baseR, rand, {
+        neckStart: 0.835 + rand() * 0.035,
+        mouthRatio: 0.26 + rand() * 0.08,
+        lipFlare: 1.009 + rand() * 0.018
+      });
+    }
+
+    function waistFlareVesselRadius(t, baseR, rand, formSeed) {
+      let r = baseR * gaussianBump(t, 0.17 + rand() * 0.09, 0.11 + rand() * 0.05, 0.18 + rand() * 0.08);
+      r *= pinchEnvelope(t, 0.36 + rand() * 0.12, 0.085 + rand() * 0.035, 0.09 + rand() * 0.06);
+      r += baseR * gaussianBump(t, 0.6 + rand() * 0.18, 0.13 + rand() * 0.06, 0.22 + rand() * 0.1);
+      if (t < 0.1) r *= 0.72 + t * 2.4;
+      return finishVesselRadius(t, r, baseR, rand, {
+        neckStart: 0.815 + rand() * 0.04,
+        mouthRatio: 0.32 + rand() * 0.1,
+        lipFlare: 1.011 + rand() * 0.02
+      });
+    }
+
+    function pedestalBowlRadius(t, baseR, rand, formSeed) {
+      const stemR = baseR * (0.2 + rand() * 0.06);
+      let r;
+      if (t < 0.2) {
+        const pt = t / 0.2;
+        r = stemR * (0.9 + pt * 0.14);
+      } else {
+        r = baseR * gaussianBump(t, 0.46 + rand() * 0.14, 0.17 + rand() * 0.07, 0.26 + rand() * 0.1);
+      }
+      if (t > 0.76) {
+        const nt = (t - 0.76) / 0.24;
+        r *= 1 - nt * nt * (0.32 + rand() * 0.08);
+      }
+      if (t < 0.06) r *= 0.84 + t * 2.2;
+      return finishVesselRadius(t, r, baseR, rand, {
+        neckStart: 0.835 + rand() * 0.035,
+        mouthRatio: 0.3 + rand() * 0.08,
+        lipFlare: 1.008 + rand() * 0.016
+      });
+    }
+
+    function wideShoulderJarRadius(t, baseR, rand, formSeed) {
+      const shoulder = 0.56 + rand() * 0.14;
+      const shoulderWidth = 0.14 + rand() * 0.04;
+      let r = baseR * (0.13 + 0.78 * Math.exp(-Math.pow((t - shoulder) / shoulderWidth, 2)));
+      if (t < shoulder) {
+        const wt = (shoulder - t) / Math.max(shoulder, 0.01);
+        r *= 0.36 + 0.64 * Math.pow(Math.min(wt, 1), 0.46 + rand() * 0.06);
+      }
+      if (t < 0.06) r *= 0.82 + t * 2.6;
+      if (t > 0.82) {
+        const nt = (t - 0.82) / 0.18;
+        r *= 1 - nt * nt * (0.38 + rand() * 0.08);
+      }
+      return finishVesselRadius(t, r, baseR, rand, {
+        neckStart: 0.855 + rand() * 0.03,
+        mouthRatio: 0.28 + rand() * 0.08,
+        lipFlare: 1.006 + rand() * 0.016
+      });
+    }
+
+    function openBowlCeramicRadius(t, baseR, rand, formSeed) {
+      const rim = 0.87 + rand() * 0.07;
+      let r = baseR * (0.44 + 0.56 * Math.exp(-Math.pow((t - rim) / (0.085 + rand() * 0.03), 2)));
+      r += baseR * gaussianBump(t, 0.56 + rand() * 0.14, 0.17 + rand() * 0.06, 0.09 + rand() * 0.06);
+      if (t < 0.12) {
+        const bt = t / 0.12;
+        r *= 0.66 + 0.34 * Math.pow(bt, 0.55);
+      }
+      return finishVesselRadius(t, r, baseR, rand, {
+        neckStart: 0.925 + rand() * 0.02,
+        mouthRatio: 0.7 + rand() * 0.14,
+        lipFlare: 1.013 + rand() * 0.02
+      });
     }
 
     function taperDreamRadius(t, baseR, rand, formSeed) {
@@ -1045,6 +1475,16 @@
       MoonJar: moonJarRadius,
       Maebyeong: maebyeongRadius,
       WhitePorcelain: whitePorcelainRadius,
+      StackedTier: stackedTierRadius,
+      AmphoraCeramic: amphoraCeramicRadius,
+      SquatBowl: squatBowlRadius,
+      FlaredRim: flaredRimVesselRadius,
+      DiscNeck: discNeckVesselRadius,
+      PearGourd: pearGourdVesselRadius,
+      WaistFlare: waistFlareVesselRadius,
+      PedestalBowl: pedestalBowlRadius,
+      WideShoulder: wideShoulderJarRadius,
+      OpenBowl: openBowlCeramicRadius,
       FluidVessel: fluidVesselRadius,
       CoilStack: coilStackRadius,
       PinchMorph: pinchMorphRadius,
@@ -1079,24 +1519,31 @@
     }
 
     function finalizeProceduralProfile(profile, rng, formSeed, formType, meta, isCultural) {
+      const isSculptural = SCULPTURAL_ROUND_ARCHETYPES.includes(formType);
+      const gentle = isCultural || isSculptural;
       let p = profile;
-      if (!isCultural && rng() < 0.34) {
+      if (!gentle && rng() < 0.34) {
         p = applyOrganicPasses(p, rng, meta);
       }
-      p = refineProfileSilhouette(p, isCultural);
-      if (profileSpikiness(p) > (isCultural ? 0.028 : 0.042)) {
-        p = refineProfileSilhouette(smoothSculpturalProfile(profile, 2), isCultural);
+      p = refineProfileSilhouette(p, gentle);
+      if (profileSpikiness(p) > (gentle ? 0.028 : 0.042)) {
+        p = refineProfileSilhouette(smoothSculpturalProfile(profile, 2), gentle);
       }
       p = applyProfileSeedVariation(
         p,
         rng,
         formSeed,
-        isCultural
-          ? (formType === 'MoonJar' ? 0.18 : formType === 'Maebyeong' ? 0.14 : formType === 'WhitePorcelain' ? 0.2 : 0.36)
+        gentle
+          ? (formType === 'MoonJar' ? 0.38
+            : formType === 'Maebyeong' ? 0.34
+            : formType === 'WhitePorcelain' ? 0.4
+            : isSculptural ? 0.58
+            : 0.36)
           : 1.22
       );
-      p = refineProfileSilhouette(p, isCultural);
-      p = ensureCeramicSilhouette(p, rng, isCultural);
+      if (gentle) p = enrichCeramicCurves(p, rng, isSculptural ? 0.48 : 0.62);
+      p = refineProfileSilhouette(p, gentle);
+      p = ensureCeramicSilhouette(p, rng, gentle);
       return p;
     }
 
@@ -1117,10 +1564,11 @@
 
       let penalty = 0;
       if (peakT > 0.84) penalty += 2.4;
-      if (mouthR / Math.max(maxR, 0.01) < 0.24) penalty += 1.5;
-      if (baseR / Math.max(maxR, 0.01) < 0.16) penalty += 1.8;
-      if (midR / Math.max(maxR, 0.01) < 0.3) penalty += 1.4;
-      if (profileSlendernessScore(profile) > 0.28) penalty += 1.6;
+      if (mouthR / Math.max(maxR, 0.01) < 0.18) penalty += 0.85;
+      if (baseR / Math.max(maxR, 0.01) < 0.14) penalty += 1.2;
+      if (midR / Math.max(maxR, 0.01) < 0.26) penalty += 0.85;
+      if (profileSlendernessScore(profile) > 0.32) penalty += 1.2;
+      if (profileThinGirthScore(profile) > 0.2) penalty += profileThinGirthScore(profile) * 1.8;
       if (profileCapsuleScore(profile) > 0.28) penalty += 1.6;
       penalty += profileBoxinessScore(profile) * 2.4;
       penalty += profileShoulderCornerPenalty(profile) * 1.5;
@@ -1132,45 +1580,53 @@
 
     function isPotteryFormType(formType) {
       if (CULTURAL_ROUND_ARCHETYPES.includes(formType)) return true;
+      if (SCULPTURAL_ROUND_ARCHETYPES.includes(formType)) return true;
       if (!formType || !String(formType).startsWith('Hybrid:')) return false;
       return String(formType).replace('Hybrid:', '').split('/')
-        .every((id) => CULTURAL_ROUND_ARCHETYPES.includes(id));
+        .every((id) => MORPH_ARCHETYPE_POOL.includes(id));
     }
 
     function passesPotterySilhouette(data) {
       if (!isPotteryFormType(data.formType)) return false;
+      const sculptural = isSculpturalPotteryType(data.formType);
+      const curveBeauty = profileCurveBeautyScore(data.profile);
       if (profileSpikiness(data.profile) > MAX_PROFILE_SPIKINESS) return false;
-      if (profileMaxAngularJump(data.profile) > 0.0075) return false;
+      if (profileMaxAngularJump(data.profile) > 0.0085) return false;
       if (profileFootSpindlePenalty(data.profile) > 0.08) return false;
+      if (curveBeauty < MIN_CURVE_BEAUTY_SCORE) return false;
+      if (profileThinGirthScore(data.profile) > MAX_THIN_GIRTH_SCORE && curveBeauty < 0.5) return false;
+      if (profileSlendernessScore(data.profile) > MAX_SLENDERNESS_SCORE && curveBeauty < 0.46) return false;
       if (profileBoxinessScore(data.profile) > MAX_BOXINESS_SCORE) return false;
-      if (profileShoulderCornerPenalty(data.profile) > 0.35) return false;
-      if (profileTrapezoidBasePenalty(data.profile) > 0.5) return false;
-      if (profileCapsuleScore(data.profile) > MAX_CAPSULE_SCORE) return false;
-      if (culturalProfileScore(data) < 0.36) return false;
-      return profilePotteryDeparturePenalty(data.profile) < 0.32;
+      if (profileShoulderCornerPenalty(data.profile) > 0.42) return false;
+      if (profileTrapezoidBasePenalty(data.profile) > 0.55) return false;
+      if (profileCapsuleScore(data.profile) > MAX_CAPSULE_SCORE && curveBeauty < (sculptural ? 0.36 : 0.42)) return false;
+      if (culturalProfileScore(data) < (sculptural ? 0.24 : 0.32)) return false;
+      return profilePotteryDeparturePenalty(data.profile) < (sculptural ? 0.62 : 0.42);
     }
 
     function generateHybridSilhouette(rng, detail = PROFILE_POINTS, variationKey = 0) {
       const rand = rng;
-      let idA = CULTURAL_ROUND_ARCHETYPES[Math.floor(rand() * CULTURAL_ROUND_ARCHETYPES.length)];
-      let idB = CULTURAL_ROUND_ARCHETYPES[Math.floor(rand() * CULTURAL_ROUND_ARCHETYPES.length)];
+      let idA = MORPH_ARCHETYPE_POOL[Math.floor(rand() * MORPH_ARCHETYPE_POOL.length)];
+      let idB = MORPH_ARCHETYPE_POOL[Math.floor(rand() * MORPH_ARCHETYPE_POOL.length)];
       while (idB === idA) {
-        idB = CULTURAL_ROUND_ARCHETYPES[Math.floor(rand() * CULTURAL_ROUND_ARCHETYPES.length)];
+        idB = MORPH_ARCHETYPE_POOL[Math.floor(rand() * MORPH_ARCHETYPE_POOL.length)];
       }
       const fnA = RADIUS_BY_ARCHETYPE[idA];
       const fnB = RADIUS_BY_ARCHETYPE[idB];
       const formSeed = (Math.floor(rand() * 100000) + variationKey * 104729) | 0;
       const formType = `Hybrid:${idA}/${idB}`;
-      const baseR = 0.28 + rand() * 0.2;
+      const baseR = 0.24 + rand() * 0.28;
       const points = [];
 
       for (let i = 0; i < detail; i++) {
         const t = i / Math.max(detail - 1, 1);
         const y = CANONICAL_Y_MIN + t * (CANONICAL_Y_MAX - CANONICAL_Y_MIN);
         const rA = fnA(t, baseR, rand, formSeed);
-        const rB = fnB(t, baseR * (0.88 + rand() * 0.18), rand, formSeed + 1337);
-        const wRaw = 0.5 + 0.5 * Math.sin(t * Math.PI * (0.85 + rand() * 0.3) + formSeed * 0.004);
-        const w = wRaw * wRaw * (3 - 2 * wRaw);
+        const rB = fnB(t, baseR * (0.72 + rand() * 0.36), rand, formSeed + 1337);
+        const wRaw = 0.5 + 0.5 * Math.sin(t * Math.PI * (0.75 + rand() * 0.65) + formSeed * 0.004);
+        const wRipple = 0.16 * Math.sin(t * Math.PI * (2.4 + rand() * 2.8) + formSeed * 0.013);
+        const wBlend = wRaw + wRipple * Math.sin(t * Math.PI * 1.15);
+        const w = Math.min(1, Math.max(0, wBlend * wBlend * (3 - 2 * wBlend)));
         points.push(new THREE.Vector2(Math.max(rA * (1 - w) + rB * w, 0.004), y));
       }
 
@@ -1206,11 +1662,15 @@
     function generateProceduralSilhouette(rng, detail = PROFILE_POINTS, forcedArchetypeId = null, variationKey = 0) {
       const rand = rng;
       const formSeed = (Math.floor(rand() * 100000) + variationKey * 104729) | 0;
-      const formType = forcedArchetypeId
-        || CULTURAL_ROUND_ARCHETYPES[Math.floor(rand() * CULTURAL_ROUND_ARCHETYPES.length)];
+      const resolvedId = resolveMorphArchetypeId(forcedArchetypeId, rand);
+      const formType = resolvedId
+        || MORPH_ARCHETYPE_POOL[Math.floor(rand() * MORPH_ARCHETYPE_POOL.length)];
       const radiusFn = RADIUS_BY_ARCHETYPE[formType];
-      const isCultural = ['MoonJar', 'Maebyeong', 'WhitePorcelain'].includes(formType);
-      const baseR = isCultural ? 0.28 + rand() * 0.22 : 0.24 + rand() * 0.52;
+      const isCultural = CULTURAL_ROUND_ARCHETYPES.includes(formType);
+      const isSculptural = SCULPTURAL_ROUND_ARCHETYPES.includes(formType);
+      const baseR = (isCultural || isSculptural)
+        ? 0.24 + rand() * 0.3
+        : 0.24 + rand() * 0.52;
       const points = [];
 
       for (let i = 0; i < detail; i++) {
@@ -1234,7 +1694,7 @@
         slump: 0.32 + rand() * 0.62
       };
 
-      let profile = finalizeProceduralProfile(points, rng, formSeed, formType, meta, isCultural);
+      let profile = finalizeProceduralProfile(points, rng, formSeed, formType, meta, isCultural || isSculptural);
 
       return {
         profile,
@@ -1255,23 +1715,28 @@
     }
 
     const LATHE_SEGMENTS = 72;
-    const MORPH_DURATION = 8.0 / 1.5;
-    const HOLD_DURATION = 1.4 / 1.5;
-    const BIRTH_DURATION = 4.8;
+    const FORM_CHANGE_INTERVAL = 2.0;
+    const MORPH_DURATION = 1.55;
+    const HOLD_DURATION = 0.08;
+    const FAST_MORPH_ATTEMPTS = 5;
+    const FAST_MORPH_PICKS = 6;
+    const BIRTH_DURATION = 2.4;
     const BIRTH_SPIRAL_TURNS = 2.6;
     const JAR_DISPLAY_SCALE = 1.575;
-    const MORPH_PICK_ATTEMPTS = 28;
-    const MIN_SILHOUETTE_DIFF = 0.30;
-    const TARGET_SILHOUETTE_DIFF = 0.38;
-    const MIN_HISTORY_DIFF = 0.24;
-    const MIN_SIGNATURE_FROM_PREV = 0.38;
-    const MIN_SIGNATURE_HISTORY = 0.28;
-    const RECENT_FORM_LIMIT = 20;
-    const RECENT_ARCHETYPE_BLOCK = 4;
+    const MORPH_PICK_ATTEMPTS = 52;
+    const MIN_SILHOUETTE_DIFF = 0.28;
+    const TARGET_SILHOUETTE_DIFF = 0.46;
+    const MIN_HISTORY_DIFF = 0.22;
+    const MIN_SIGNATURE_FROM_PREV = 0.36;
+    const MIN_SIGNATURE_HISTORY = 0.26;
+    const RECENT_FORM_LIMIT = 18;
+    const RECENT_ARCHETYPE_BLOCK = 1;
     const MAX_PROFILE_SPIKINESS = 0.022;
     const MAX_CAPSULE_SCORE = 0.30;
     const MAX_BOXINESS_SCORE = 0.16;
-    const MAX_SLENDERNESS_SCORE = 0.4;
+    const MAX_SLENDERNESS_SCORE = 0.38;
+    const MAX_THIN_GIRTH_SCORE = 0.27;
+    const MIN_CURVE_BEAUTY_SCORE = 0.26;
     let recentFormHistory = [];
     let recentArchetypeHistory = [];
 
@@ -1304,19 +1769,91 @@
       return points;
     }
 
-    function packProfileData(raw, profile, rng) {
+    function profileBounds(profile) {
+      let yMin = profile[0].y;
+      let yMax = profile[profile.length - 1].y;
+      for (const p of profile) {
+        yMin = Math.min(yMin, p.y);
+        yMax = Math.max(yMax, p.y);
+      }
       return {
-        profile,
-        yMin: CANONICAL_Y_MIN,
-        yRange: CANONICAL_Y_MAX - CANONICAL_Y_MIN,
-        mouthR: profile[profile.length - 1].x,
-        mouthY: profile[profile.length - 1].y,
+        yMin,
+        yMax,
+        yRange: Math.max(yMax - yMin, 1e-4)
+      };
+    }
+
+    function scaleProfileHeight(profile, scale, anchorY = null) {
+      const baseY = anchorY ?? profile[0].y;
+      return profile.map((p) => new THREE.Vector2(p.x, baseY + (p.y - baseY) * scale));
+    }
+
+    function computeFormHeightScale(profile, formType, formSeed = 0) {
+      const type = String(formType || '');
+      const n = profile.length;
+      let maxIdx = 0;
+      let maxR = 0;
+      for (let i = 0; i < n; i++) {
+        if (profile[i].x > maxR) {
+          maxR = profile[i].x;
+          maxIdx = i;
+        }
+      }
+      const bellyT = maxIdx / Math.max(n - 1, 1);
+      const seedJitter = ((formSeed * 0.00023) % 1);
+      let scale = 1.0;
+
+      if (type === 'MoonJar' || type.includes('MoonJar')) {
+        scale = 0.84 + seedJitter * 0.13;
+      } else if (type === 'Maebyeong' || type.includes('Maebyeong')) {
+        scale = 1.04 + seedJitter * 0.18 + bellyT * 0.08;
+      } else if (type === 'WhitePorcelain' || type.includes('WhitePorcelain')) {
+        scale = 0.93 + seedJitter * 0.15 + bellyT * 0.06;
+      } else if (type === 'SquatBowl' || type === 'OpenBowl' || type.includes('SquatBowl') || type.includes('OpenBowl')) {
+        scale = 0.56 + seedJitter * 0.1;
+      } else if (type === 'AmphoraCeramic' || type === 'WideShoulder'
+        || type.includes('AmphoraCeramic') || type.includes('WideShoulder')) {
+        scale = 1.14 + seedJitter * 0.22 + bellyT * 0.06;
+      } else if (type === 'DiscNeck' || type.includes('DiscNeck')) {
+        scale = 1.22 + seedJitter * 0.2;
+      } else if (type === 'FlaredRim' || type.includes('FlaredRim')) {
+        scale = 1.08 + seedJitter * 0.18 + bellyT * 0.08;
+      } else if (type === 'PearGourd' || type.includes('PearGourd')) {
+        scale = 0.98 + seedJitter * 0.16 + bellyT * 0.1;
+      } else if (type === 'WaistFlare' || type.includes('WaistFlare')) {
+        scale = 1.02 + seedJitter * 0.17 + bellyT * 0.08;
+      } else if (type === 'PedestalBowl' || type.includes('PedestalBowl')) {
+        scale = 0.82 + seedJitter * 0.14;
+      } else if (type === 'TaperDream' || type.includes('TaperDream')) {
+        scale = 1.06 + seedJitter * 0.18;
+      } else if (type === 'CoilStack' || type === 'StackedTier' || type === 'MultiBulge'
+        || type.includes('CoilStack') || type.includes('StackedTier') || type.includes('MultiBulge')) {
+        scale = 0.88 + seedJitter * 0.26 + bellyT * 0.14;
+      } else if (isSculpturalPotteryType(type)) {
+        scale = 0.72 + seedJitter * 0.32 + bellyT * 0.16;
+      } else {
+        scale = 0.9 + seedJitter * 0.2 + bellyT * 0.1;
+      }
+      return Math.min(1.45, Math.max(0.55, scale));
+    }
+
+    function packProfileData(raw, profile, rng) {
+      const heightScale = computeFormHeightScale(profile, raw.formType, raw.formSeed);
+      const scaled = scaleProfileHeight(profile, heightScale);
+      const bounds = profileBounds(scaled);
+      return {
+        profile: scaled,
+        yMin: bounds.yMin,
+        yRange: bounds.yRange,
+        mouthR: scaled[scaled.length - 1].x,
+        mouthY: scaled[scaled.length - 1].y,
+        heightScale,
         formSeed: raw.formSeed,
         formType: raw.formType,
         surfaceType: raw.surfaceType,
         latheSegments: raw.latheSegments || LATHE_SEGMENTS,
         colorShift: rng(),
-        dispScale: 0.88 + rng() * 0.18
+        dispScale: 0.78 + rng() * 0.34
       };
     }
 
@@ -1325,6 +1862,7 @@
       const n = Math.min(a.profile.length, b.profile.length);
       for (let i = 0; i < n; i++) {
         diff += Math.abs(a.profile[i].x - b.profile[i].x);
+        diff += Math.abs(a.profile[i].y - b.profile[i].y) * 0.92;
       }
       return diff / Math.max(n, 1);
     }
@@ -1349,6 +1887,7 @@
         if (r > data.profile[i - 1].x && r > data.profile[i + 1].x && r > meanR * 1.08) peakCount++;
       }
       const sig = analyzeProfileSignature(data);
+      const bounds = profileBounds(data.profile);
       return {
         bellyT: maxIdx / Math.max(n - 1, 1),
         maxR,
@@ -1357,6 +1896,8 @@
         waistR: sig.waistR,
         peakCount,
         volume: sig.volume,
+        yRange: bounds.yRange,
+        heightScale: data.heightScale ?? 1,
         formType: data.formType
       };
     }
@@ -1371,6 +1912,8 @@
       d += Math.abs(sa.fullness - sb.fullness) / Math.max(sa.fullness, 0.5) * 1.8;
       d += Math.abs(sa.peakCount - sb.peakCount) * 0.24;
       d += Math.abs(sa.waistR - sb.waistR) / Math.max(sa.waistR, 0.05) * 1.2;
+      d += Math.abs((sa.yRange ?? 1) - (sb.yRange ?? 1)) / Math.max(sa.yRange ?? 1, 0.1) * 2.4;
+      d += Math.abs((sa.heightScale ?? 1) - (sb.heightScale ?? 1)) * 2.8;
       d += Math.abs(sa.volume - sb.volume) / Math.max(sa.volume, 0.02) * 0.35;
       if (sa.formType !== sb.formType) d += 0.42;
       return d;
@@ -1434,7 +1977,69 @@
       return buildClassicCulturalData('MoonJar', rng, variationKey);
     }
 
-    function buildProfileData(rng, forcedArchetypeId = null, variationKey = 0) {
+    function buildProfileDataFast(rng, forcedArchetypeId = null, variationKey = 0, contrastFrom = null) {
+      const archetypeId = resolveMorphArchetypeId(forcedArchetypeId, rng) || forcedArchetypeId;
+      for (let attempt = 0; attempt < FAST_MORPH_ATTEMPTS; attempt++) {
+        const mixKey = variationKey + attempt * 2153 + attempt * attempt * 431;
+        const useHybrid = archetypeId === '__HYBRID__' || attempt % 2 === 0;
+        const raw = useHybrid
+          ? generateHybridSilhouette(rng, PROFILE_POINTS, mixKey)
+          : createExperimentalCeramicProfile(
+            rng,
+            PROFILE_POINTS,
+            archetypeId,
+            mixKey
+          );
+        let profile = smoothSculpturalProfile(resampleProfileToCanonical(raw.profile), 1);
+        profile = capProfileSlopes(profile, 0.006);
+        const data = packProfileData(raw, profile, rng);
+        if (profileSpikiness(data.profile) > MAX_PROFILE_SPIKINESS) continue;
+        if (!passesPotterySilhouette(data)) continue;
+        if (contrastFrom && isDuplicateMorphTarget(contrastFrom, data)) continue;
+        return data;
+      }
+      const mixKey = variationKey + 73331;
+      const raw = generateHybridSilhouette(rng, PROFILE_POINTS, mixKey);
+      const profile = smoothSculpturalProfile(resampleProfileToCanonical(raw.profile), 1);
+      return packProfileData(raw, profile, rng);
+    }
+
+    function finalizeMorphTargetData(data) {
+      if (!data.processedProfile) {
+        data.processedProfile = processMorphEndpointProfile(
+          data.profile.map((p) => p.clone())
+        );
+      }
+      return data;
+    }
+
+    function pickFastMorphTarget(fromData, seed, morphIndex = 0) {
+      const picks = [
+        '__HYBRID__',
+        '__SCULPTURAL__',
+        ...MORPH_ARCHETYPE_POOL
+      ];
+      for (let i = 0; i < FAST_MORPH_PICKS; i++) {
+        const variationKey = seed + morphIndex * 13337 + i * 4817 + i * i * 613;
+        const archetypeId = picks[(i + morphIndex) % picks.length];
+        const data = buildProfileDataFast(
+          mulberry32(variationKey),
+          archetypeId,
+          variationKey,
+          fromData
+        );
+        if (validateMorphTarget(fromData, data, false)) {
+          return finalizeMorphTargetData(data);
+        }
+      }
+      const variationKey = seed + morphIndex * 77777;
+      const rng = mulberry32(variationKey);
+      const raw = generateHybridSilhouette(rng, PROFILE_POINTS, variationKey);
+      const profile = smoothSculpturalProfile(resampleProfileToCanonical(raw.profile), 1);
+      return finalizeMorphTargetData(packProfileData(raw, profile, rng));
+    }
+
+    function buildProfileData(rng, forcedArchetypeId = null, variationKey = 0, contrastFrom = null) {
       if (forcedArchetypeId === '__CLASSIC__') {
         const classicId = CLASSIC_CULTURAL_ROTATION[
           Math.abs(variationKey) % CLASSIC_CULTURAL_ROTATION.length
@@ -1443,41 +2048,108 @@
       }
       let best = null;
       let bestMetric = -Infinity;
-      const attempts = forcedArchetypeId === '__HYBRID__' ? 14 : 16;
+      const attempts = contrastFrom
+        ? (forcedArchetypeId === '__HYBRID__' ? 36 : 44)
+        : (forcedArchetypeId === '__HYBRID__' ? 20 : 24);
       for (let attempt = 0; attempt < attempts; attempt++) {
+        const mixKey = variationKey + attempt * 613 + attempt * attempt * 997;
         const raw = forcedArchetypeId === '__HYBRID__'
-          ? generateHybridSilhouette(rng, PROFILE_POINTS, variationKey + attempt * 613)
+          ? generateHybridSilhouette(rng, PROFILE_POINTS, mixKey)
           : createExperimentalCeramicProfile(
             rng,
             PROFILE_POINTS,
             forcedArchetypeId,
-            variationKey + attempt * 613
+            mixKey
           );
         const profile = ensureCeramicSilhouette(
           resampleProfileToCanonical(raw.profile),
           rng,
-          ['MoonJar', 'Maebyeong', 'WhitePorcelain'].includes(raw.formType)
+          CULTURAL_ROUND_ARCHETYPES.includes(raw.formType)
+            || SCULPTURAL_ROUND_ARCHETYPES.includes(raw.formType)
         );
         const data = packProfileData(raw, profile, rng);
         const capsule = profileCapsuleScore(data.profile);
         const slender = profileSlendernessScore(data.profile);
         if (capsule > MAX_CAPSULE_SCORE) continue;
         if (slender > MAX_SLENDERNESS_SCORE) continue;
+        if (profileThinGirthScore(data.profile) > MAX_THIN_GIRTH_SCORE) continue;
         if (profileSpikiness(data.profile) > MAX_PROFILE_SPIKINESS) continue;
         if (!passesPotterySilhouette(data)) continue;
         const roundness = culturalProfileScore(data);
-        const metric = beautyScore(data) + roundness * 1.6 - capsule * (roundness > 0.58 ? 0.9 : 2.5) - slender * 3.2;
+        const curveBeauty = profileCurveBeautyScore(data.profile);
+        let metric;
+        if (contrastFrom) {
+          if (isDuplicateMorphTarget(contrastFrom, data)) continue;
+          const sil = silhouetteDiff(contrastFrom, data);
+          const hist = minHistorySilhouetteDiff(data);
+          const sigFrom = formSignatureDistance(contrastFrom, data);
+          const sigHist = minHistorySignatureDiff(data);
+          metric = sil * 22 + hist * 12 + sigFrom * 14 + sigHist * 12
+            + contrastScore(contrastFrom, data) * 3.8
+            + beautyScore(data) * 0.72
+            + curveBeauty * 2.2
+            + roundness * 0.8;
+          if (sil >= TARGET_SILHOUETTE_DIFF && validateMorphTarget(contrastFrom, data, false)) {
+            best = data;
+            break;
+          }
+        } else {
+          metric = beautyScore(data) + roundness * 1.6 + curveBeauty * 2.6
+            - capsule * (roundness > 0.58 ? 0.7 : 2.2)
+            - slender * (curveBeauty > 0.52 ? 1.2 : 2.8);
+          if (curveBeauty > 0.58 && metric > 1.4) break;
+        }
         if (metric > bestMetric) {
           bestMetric = metric;
           best = data;
         }
-        if (capsule < 0.28 && metric > 1.2) break;
       }
       if (best) return best;
+      if (contrastFrom) {
+        for (let attempt = 0; attempt < 18; attempt++) {
+          const mixKey = variationKey + 620000 + attempt * 3571 + attempt * attempt * 131;
+          const raw = generateHybridSilhouette(rng, PROFILE_POINTS, mixKey);
+          const profile = ensureCeramicSilhouette(
+            resampleProfileToCanonical(raw.profile),
+            rng,
+            true
+          );
+          const data = packProfileData(raw, profile, rng);
+          if (!passesPotterySilhouette(data)) continue;
+          if (!isDuplicateMorphTarget(contrastFrom, data)) return data;
+        }
+        return forceDistinctHybrid(contrastFrom, variationKey, variationKey >>> 0);
+      }
       return buildClassicCulturalData(
         CULTURAL_ROUND_ARCHETYPES[variationKey % CULTURAL_ROUND_ARCHETYPES.length],
         rng,
         variationKey
+      );
+    }
+
+    function buildEmergencyMorphTarget(fromData, seed, morphIndex = 0) {
+      return pickFastMorphTarget(fromData, seed + morphIndex * 48271, morphIndex);
+    }
+
+    function forceDistinctHybrid(fromData, seed, morphIndex = 0) {
+      for (let i = 0; i < 36; i++) {
+        const variationKey = seed + morphIndex * 120071 + i * 15433 + i * i * 911;
+        const rng = mulberry32(variationKey);
+        const raw = generateHybridSilhouette(rng, PROFILE_POINTS, variationKey);
+        const profile = ensureCeramicSilhouette(
+          resampleProfileToCanonical(raw.profile),
+          rng,
+          true
+        );
+        const data = packProfileData(raw, profile, rng);
+        if (!passesPotterySilhouette(data)) continue;
+        if (silhouetteDiff(fromData, data) >= MIN_SILHOUETTE_DIFF * 0.78) return data;
+      }
+      return buildProfileData(
+        mulberry32(seed + morphIndex * 48271 + 999983),
+        '__HYBRID__',
+        seed + morphIndex * 13337 + 777777,
+        null
       );
     }
 
@@ -1486,13 +2158,41 @@
         profile: data.profile.map((p) => p.clone()),
         formType: data.formType,
         formSeed: data.formSeed,
-        mouthR: data.mouthR
+        mouthR: data.mouthR,
+        mouthY: data.mouthY,
+        yMin: data.yMin,
+        yRange: data.yRange,
+        heightScale: data.heightScale ?? 1,
+        colorShift: data.colorShift,
+        surfaceType: data.surfaceType
       });
       if (recentFormHistory.length > RECENT_FORM_LIMIT) recentFormHistory.shift();
       recentArchetypeHistory.push(data.formType);
       if (recentArchetypeHistory.length > RECENT_ARCHETYPE_BLOCK + 2) {
         recentArchetypeHistory.shift();
       }
+    }
+
+    function isDuplicateMorphTarget(fromData, data) {
+      if (!fromData || !data) return true;
+      const sil = silhouetteDiff(fromData, data);
+      const sigFrom = formSignatureDistance(fromData, data);
+      if (sil < MIN_SILHOUETTE_DIFF * 0.9) return true;
+      if (sigFrom < MIN_SIGNATURE_FROM_PREV * 0.86) return true;
+      if (minHistorySilhouetteDiff(data) < MIN_HISTORY_DIFF * 0.86) return true;
+      if (minHistorySignatureDiff(data) < MIN_SIGNATURE_HISTORY * 0.86) return true;
+      for (const prev of recentFormHistory) {
+        if (Math.abs((prev.formSeed ?? 0) - (data.formSeed ?? 0)) < 96) return true;
+        if (silhouetteDiff(prev, data) < MIN_HISTORY_DIFF * 0.88) return true;
+        if (formSignatureDistance(prev, data) < MIN_SIGNATURE_HISTORY * 0.88) return true;
+      }
+      return false;
+    }
+
+    function validateMorphTarget(fromData, data, strict = true) {
+      if (!data || !passesPotterySilhouette(data)) return false;
+      if (isDuplicateMorphTarget(fromData, data)) return false;
+      return passesNoveltyGate(fromData, data, strict);
     }
 
     function minHistorySilhouetteDiff(data, history = recentFormHistory) {
@@ -1525,13 +2225,25 @@
       const rng = mulberry32(seed ^ 0x9e3779b9);
       const blocked = new Set([fromType]);
       for (const id of recentArchetypeHistory.slice(-RECENT_ARCHETYPE_BLOCK)) blocked.add(id);
-      let list = CULTURAL_ROUND_ARCHETYPES.filter((id) => !blocked.has(id));
-      if (list.length < 2) {
-        list = CULTURAL_ROUND_ARCHETYPES.filter((id) => id !== fromType);
+      let cultural = CULTURAL_ROUND_ARCHETYPES.filter((id) => !blocked.has(id));
+      let sculptural = SCULPTURAL_ROUND_ARCHETYPES.filter((id) => !blocked.has(id));
+      if (cultural.length < 2) {
+        cultural = CULTURAL_ROUND_ARCHETYPES.filter((id) => id !== fromType);
       }
-      list = ['__CLASSIC__', ...list.filter((id) => id !== '__CLASSIC__')];
-      if (list.length < 3) list.push('__HYBRID__');
-      else list.splice(2, 0, '__HYBRID__');
+      if (sculptural.length < 2) {
+        sculptural = SCULPTURAL_ROUND_ARCHETYPES.filter((id) => id !== fromType);
+      }
+      const sculptSample = sculptural.slice(0, 6);
+      let list = [
+        '__HYBRID__',
+        '__SCULPTURAL__',
+        '__HYBRID__',
+        ...cultural,
+        ...sculptSample.filter((id) => !cultural.includes(id))
+      ];
+      if ((seed >>> 0) % 11 === 0) list.push('__CLASSIC__');
+      if (list.length < 6) list.push('__SCULPTURAL__');
+      if (list.length < 7) list.push('__HYBRID__');
       for (let i = list.length - 1; i > 0; i--) {
         const j = Math.floor(rng() * (i + 1));
         [list[i], list[j]] = [list[j], list[i]];
@@ -1540,7 +2252,6 @@
     }
 
     function passesNoveltyGate(fromData, data, strict = true) {
-      if (isSameArchetypeFamily(fromData.formType, data.formType)) return false;
       const sil = silhouetteDiff(fromData, data);
       const hist = minHistorySilhouetteDiff(data);
       const sigFrom = formSignatureDistance(fromData, data);
@@ -1551,10 +2262,10 @@
           && sigFrom >= MIN_SIGNATURE_FROM_PREV
           && sigHist >= MIN_SIGNATURE_HISTORY;
       }
-      return sil >= MIN_SILHOUETTE_DIFF * 0.82
-        && hist >= MIN_HISTORY_DIFF * 0.82
-        && sigFrom >= MIN_SIGNATURE_FROM_PREV * 0.78
-        && sigHist >= MIN_SIGNATURE_HISTORY * 0.78;
+      return sil >= MIN_SILHOUETTE_DIFF * 0.86
+        && hist >= MIN_HISTORY_DIFF * 0.86
+        && sigFrom >= MIN_SIGNATURE_FROM_PREV * 0.82
+        && sigHist >= MIN_SIGNATURE_HISTORY * 0.82;
     }
 
     function createContrastingSearch(fromData, seed, morphIndex = 0) {
@@ -1568,6 +2279,9 @@
         c: 0,
         i: 0,
         fallbackI: 0,
+        bestContrast: null,
+        bestContrastSil: -1,
+        bestContrastMetric: -Infinity,
         phase: 'main',
         best: null,
         bestMetric: -1,
@@ -1591,7 +2305,7 @@
         );
         if (culturalProfileScore(classic) >= 0.48
           && profileSpikiness(classic.profile) <= MAX_PROFILE_SPIKINESS
-          && passesNoveltyGate(state.fromData, classic, false)) {
+          && validateMorphTarget(state.fromData, classic, false)) {
           state.result = classic;
           state.done = true;
           return state;
@@ -1600,12 +2314,17 @@
 
       if (state.phase === 'main') {
         if (state.c >= state.candidates.length) {
-          if (state.best) {
+          if (state.bestContrast && validateMorphTarget(state.fromData, state.bestContrast, false)) {
+            state.result = state.bestContrast;
+            state.done = true;
+            return state;
+          }
+          if (state.best && validateMorphTarget(state.fromData, state.best, false)) {
             state.result = state.best;
             state.done = true;
             return state;
           }
-          if (state.bestRelaxed) {
+          if (state.bestRelaxed && validateMorphTarget(state.fromData, state.bestRelaxed, false)) {
             state.result = state.bestRelaxed;
             state.done = true;
             return state;
@@ -1622,14 +2341,17 @@
         }
 
         const variationKey = state.seed + state.c * 5923 + state.i * 7919 + state.morphIndex * 13337;
-        const data = buildProfileData(mulberry32(variationKey), archetypeId, variationKey);
+        const data = buildProfileData(
+          mulberry32(variationKey),
+          archetypeId,
+          variationKey,
+          state.fromData
+        );
         state.i++;
 
         if (profileSpikiness(data.profile) > MAX_PROFILE_SPIKINESS) return state;
         if (!passesPotterySilhouette(data)) return state;
-        if (profileCapsuleScore(data.profile) > MAX_CAPSULE_SCORE) return state;
-        if (profileSlendernessScore(data.profile) > MAX_SLENDERNESS_SCORE) return state;
-        if (isSameArchetypeFamily(state.fromData.formType, data.formType)) return state;
+        if (isDuplicateMorphTarget(state.fromData, data)) return state;
 
         const sil = silhouetteDiff(state.fromData, data);
         const hist = minHistorySilhouetteDiff(data);
@@ -1637,21 +2359,41 @@
         const sigHist = minHistorySignatureDiff(data);
         const contrast = contrastScore(state.fromData, data);
         const roundness = culturalProfileScore(data);
-        const capsulePenalty = roundness > 0.58 ? 1.4 : 5;
-        const culturalBonus = CULTURAL_ROUND_ARCHETYPES.includes(data.formType) ? 4.8 : 0;
-        const metric = sil * 26 + hist * 22 + sigFrom * 20 + sigHist * 18 + contrast * 1.1 + 4.2
-          + beautyScore(data) * 1.6
-          + roundness * 13
+        const curveBeauty = profileCurveBeautyScore(data.profile);
+        const capsulePenalty = roundness > 0.58 ? 1.2 : 4.2;
+        const slenderPenalty = curveBeauty > 0.52 ? 3.5 : 6.5;
+        const thinPenalty = curveBeauty > 0.52 ? 4.5 : 9.5;
+        const culturalBonus = CULTURAL_ROUND_ARCHETYPES.includes(data.formType) ? 3.2 : 0;
+        const sculpturalBonus = isSculpturalPotteryType(data.formType) ? 5.4 : 0;
+        const typeJump = data.formType !== state.fromData.formType ? 8.5 : 0;
+        const silBonus = Math.max(0, sil - MIN_SILHOUETTE_DIFF) * 52;
+        const contrastBonus = Math.max(0, contrast - 2.8) * 4.2;
+        const heightDiff = Math.abs((data.yRange ?? 1) - (state.fromData.yRange ?? 1))
+          / Math.max(state.fromData.yRange ?? 1, 0.1);
+        const heightBonus = heightDiff > 0.08 ? heightDiff * 14 : 0;
+        const metric = sil * 42 + hist * 14 + sigFrom * 14 + sigHist * 12 + contrast * 4.6
+          + silBonus + contrastBonus + typeJump + heightBonus
+          + beautyScore(data) * 1.45
+          + curveBeauty * 14
+          + roundness * 9
           + culturalBonus
-          - profilePotteryDeparturePenalty(data.profile) * 8
-          - profileBoxinessScore(data.profile) * 14
-          - profileShoulderCornerPenalty(data.profile) * 6
+          + sculpturalBonus
+          - profilePotteryDeparturePenalty(data.profile) * 5
+          - profileBoxinessScore(data.profile) * 12
+          - profileShoulderCornerPenalty(data.profile) * 4.5
           - profileCapsuleScore(data.profile) * capsulePenalty
-          - profileSlendernessScore(data.profile) * 7;
+          - profileSlendernessScore(data.profile) * slenderPenalty
+          - profileThinGirthScore(data.profile) * thinPenalty;
 
         if (passesNoveltyGate(state.fromData, data, false) && metric > state.bestRelaxedMetric) {
           state.bestRelaxedMetric = metric;
           state.bestRelaxed = data;
+        }
+
+        if (sil > state.bestContrastSil && validateMorphTarget(state.fromData, data, false)) {
+          state.bestContrastSil = sil;
+          state.bestContrast = data;
+          state.bestContrastMetric = metric;
         }
 
         if (!passesNoveltyGate(state.fromData, data, true)) return state;
@@ -1661,34 +2403,40 @@
           state.best = data;
         }
 
-        if (sil >= TARGET_SILHOUETTE_DIFF
-          && hist >= MIN_HISTORY_DIFF * 1.08
-          && sigFrom >= MIN_SIGNATURE_FROM_PREV * 1.05
-          && sigHist >= MIN_SIGNATURE_HISTORY * 1.05) {
+        if (validateMorphTarget(state.fromData, data, true)) {
           state.result = data;
           state.done = true;
         }
         return state;
       }
 
-      if (state.fallbackI < 96) {
+      if (state.fallbackI < 128) {
         const variationKey = state.seed + state.morphIndex * 99991 + state.fallbackI * 31817;
         state.fallbackI++;
-        const archetypeId = state.fallbackI % 3 === 0
+        const archetypeId = state.fallbackI % 4 === 0
           ? '__CLASSIC__'
-          : CULTURAL_ROUND_ARCHETYPES[state.fallbackI % CULTURAL_ROUND_ARCHETYPES.length];
-        const data = buildProfileData(mulberry32(variationKey), archetypeId, variationKey);
-        if (passesNoveltyGate(state.fromData, data, false) && passesPotterySilhouette(data)) {
+          : state.fallbackI % 5 === 0
+            ? '__SCULPTURAL__'
+            : state.fallbackI % 6 === 0
+              ? '__HYBRID__'
+              : MORPH_ARCHETYPE_POOL[state.fallbackI % MORPH_ARCHETYPE_POOL.length];
+        const data = buildProfileData(
+          mulberry32(variationKey),
+          archetypeId,
+          variationKey,
+          state.fromData
+        );
+        if (validateMorphTarget(state.fromData, data, false)) {
           state.result = data;
           state.done = true;
         }
         return state;
       }
 
-      state.result = buildProfileData(
-        mulberry32(state.seed + state.morphIndex * 99991 + 48271),
-        CULTURAL_ROUND_ARCHETYPES[state.morphIndex % CULTURAL_ROUND_ARCHETYPES.length],
-        state.seed + state.morphIndex * 17
+      state.result = buildEmergencyMorphTarget(
+        state.fromData,
+        state.seed + state.morphIndex * 99991,
+        state.morphIndex
       );
       state.done = true;
       return state;
@@ -1696,6 +2444,13 @@
 
     function finishContrastingSearch(state) {
       while (!state.done) stepContrastingSearch(state);
+      if (!state.result || !validateMorphTarget(state.fromData, state.result, false)) {
+        state.result = buildEmergencyMorphTarget(
+          state.fromData,
+          state.seed + state.morphIndex * 48271,
+          state.morphIndex
+        );
+      }
       return state.result;
     }
 
@@ -1704,20 +2459,7 @@
     }
 
     function pickQuickMorphTarget(fromData, seed, morphIndex = 0) {
-      const candidates = shuffledArchetypeCandidates(fromData.formType, seed + morphIndex * 1543);
-      for (let i = 0; i < 12; i++) {
-        const variationKey = seed + i * 7919 + morphIndex * 13337;
-        const archetypeId = candidates[i % candidates.length];
-        const data = buildProfileData(mulberry32(variationKey), archetypeId, variationKey);
-        if (profileSpikiness(data.profile) > MAX_PROFILE_SPIKINESS) continue;
-        if (!passesPotterySilhouette(data)) continue;
-        if (passesNoveltyGate(fromData, data, false)) return data;
-      }
-      return buildClassicCulturalData(
-        CULTURAL_ROUND_ARCHETYPES[morphIndex % CULTURAL_ROUND_ARCHETYPES.length],
-        mulberry32(seed + morphIndex * 48271),
-        seed + morphIndex * 17
-      );
+      return pickFastMorphTarget(fromData, seed, morphIndex);
     }
 
     function smoothMorphT(t) {
@@ -1749,10 +2491,31 @@
     }
 
     function applyColorsFromShift(uniforms, colorShift = 0.5) {
-      const tint = (colorShift - 0.5) * 0.03;
-      uniforms.uColorDeep.value.setRGB(0.05 + tint * 0.3, 0.16 + tint * 0.48, 0.26 - tint * 0.18);
-      uniforms.uColorMid.value.setRGB(0.1 + tint * 0.22, 0.28 + tint * 0.62, 0.42 - tint * 0.14);
-      uniforms.uColorLight.value.setRGB(0.28 + tint * 0.18, 0.52 + tint * 0.32, 0.68 - tint * 0.08);
+      const tint = (colorShift - 0.5) * 0.028;
+      uniforms.uColorDeep.value.setRGB(
+        0.048 + tint * 0.12,
+        0.19 + tint * 0.22,
+        0.28 - tint * 0.08
+      );
+      uniforms.uColorMid.value.setRGB(
+        0.1 + tint * 0.1,
+        0.34 + tint * 0.28,
+        0.46 - tint * 0.06
+      );
+      uniforms.uColorLight.value.setRGB(
+        0.28 + tint * 0.08,
+        0.56 + tint * 0.16,
+        0.72 - tint * 0.04
+      );
+    }
+
+    function lockJarColors(jar, colorShift = 0.5) {
+      applyColorsFromShift(jar.outerUniforms, colorShift);
+      applyColorsFromShift(jar.innerUniforms, colorShift);
+      snapshotJarColorsToPrev(jar);
+      jar.outerUniforms.uColorMorphT.value = 1;
+      jar.innerUniforms.uColorMorphT.value = 1;
+      jar.activeColorShift = colorShift;
     }
 
     function snapshotColorsToPrev(uniforms) {
@@ -1771,39 +2534,30 @@
     }
 
     function beginColorMorph(jar, colorShift = 0.5) {
-      snapshotJarColorsToPrev(jar);
-      applyColorsFromShift(jar.outerUniforms, colorShift);
-      applyColorsFromShift(jar.innerUniforms, colorShift);
-      jar.outerUniforms.uColorMorphT.value = 0;
-      jar.innerUniforms.uColorMorphT.value = 0;
+      lockJarColors(jar, jar.activeColorShift ?? colorShift);
     }
 
     function setColorMorphProgress(jar, t) {
-      const progress = Math.min(1, Math.max(0, t));
-      jar.outerUniforms.uColorMorphT.value = progress;
-      jar.innerUniforms.uColorMorphT.value = progress;
+      jar.outerUniforms.uColorMorphT.value = 1;
+      jar.innerUniforms.uColorMorphT.value = 1;
     }
 
     function finishColorMorph(jar, colorShift = 0.5) {
-      applyColorsFromShift(jar.outerUniforms, colorShift);
-      applyColorsFromShift(jar.innerUniforms, colorShift);
-      snapshotJarColorsToPrev(jar);
-      jar.outerUniforms.uColorMorphT.value = 1;
-      jar.innerUniforms.uColorMorphT.value = 1;
-      midColorFromShift(colorShift, jar.meniscus.material.color).lerp(WATER_WHITE, 0.55);
+      lockJarColors(jar, jar.activeColorShift ?? colorShift);
+      jar.meniscus.material.color.copy(CELADON_HIGHLIGHT);
     }
 
-    function applyShapeUniforms(jar, data) {
+    function applyGeometryUniforms(jar, data) {
       jar.outerUniforms.uJarYMin.value = data.yMin;
       jar.outerUniforms.uJarYRange.value = data.yRange;
-      jar.outerUniforms.uFormSeed.value = data.formSeed;
-      jar.outerUniforms.uSurfaceType.value = data.surfaceType;
       jar.outerUniforms.uDispScale.value = data.dispScale;
       jar.innerUniforms.uJarYMin.value = data.yMin;
       jar.innerUniforms.uJarYRange.value = data.yRange;
-      jar.innerUniforms.uFormSeed.value = data.formSeed;
-      jar.innerUniforms.uSurfaceType.value = data.surfaceType;
       jar.innerUniforms.uDispScale.value = data.dispScale * 0.32;
+    }
+
+    function applyShapeUniforms(jar, data) {
+      applyGeometryUniforms(jar, data);
     }
 
     function midColorFromShift(colorShift = 0.5, target = new THREE.Color()) {
@@ -1815,27 +2569,17 @@
       return 0.16 + Math.sin(elapsed * 0.38) * 0.025;
     }
 
-    function applyAppearanceLerp(jar, fromData, toData, t, startBecoming = 0.16) {
-      const ease = smoothMorphT(t);
-      jar.outerUniforms.uJarYMin.value = toData.yMin;
-      jar.outerUniforms.uJarYRange.value = toData.yRange;
-      jar.innerUniforms.uJarYMin.value = toData.yMin;
-      jar.innerUniforms.uJarYRange.value = toData.yRange;
-      jar.outerUniforms.uDispScale.value = fromData.dispScale + (toData.dispScale - fromData.dispScale) * ease;
-      jar.innerUniforms.uDispScale.value = jar.outerUniforms.uDispScale.value * 0.32;
-
-      const formSeed = fromData.formSeed + (toData.formSeed - fromData.formSeed) * ease;
-      const surfaceType = fromData.surfaceType + (toData.surfaceType - fromData.surfaceType) * ease;
-      jar.outerUniforms.uFormSeed.value = formSeed;
-      jar.innerUniforms.uFormSeed.value = formSeed;
-      jar.outerUniforms.uSurfaceType.value = surfaceType;
-      jar.innerUniforms.uSurfaceType.value = surfaceType;
+    function applyAppearanceLerp(jar, fromData, toData, ease, startBecoming = 0.16) {
+      jar.outerUniforms.uJarYMin.value = fromData.yMin;
+      jar.outerUniforms.uJarYRange.value = fromData.yRange;
+      jar.innerUniforms.uJarYMin.value = fromData.yMin;
+      jar.innerUniforms.uJarYRange.value = fromData.yRange;
+      jar.outerUniforms.uDispScale.value = fromData.dispScale;
+      jar.innerUniforms.uDispScale.value = fromData.dispScale * 0.32;
 
       const targetBecoming = 0.15 + ease * 0.12;
       jar.outerUniforms.uBecoming.value = startBecoming + (targetBecoming - startBecoming) * ease;
       jar.innerUniforms.uBecoming.value = jar.outerUniforms.uBecoming.value;
-      setColorMorphProgress(jar, ease);
-      jar.meniscus.material.color.copy(midColorFromShift(fromData.colorShift)).lerp(WATER_WHITE, ease * 0.62);
     }
 
     function setMorphingState(jar, active) {
@@ -1846,10 +2590,13 @@
 
     function beautyScore(data) {
       const sig = analyzeProfileSignature(data);
+      const curveBeauty = profileCurveBeautyScore(data.profile);
       let score = 0;
 
-      if (sig.fullness >= 1.05 && sig.fullness <= 3.8) score += 0.75;
-      else score -= Math.abs(sig.fullness - 2.0) * 0.2;
+      score += curveBeauty * 3.1;
+
+      if (sig.fullness >= 1.05 && sig.fullness <= 4.2) score += 0.85;
+      else score -= Math.abs(sig.fullness - 2.1) * 0.16;
 
       let inflect = 0;
       for (let i = 2; i < data.profile.length; i++) {
@@ -1858,44 +2605,48 @@
         inflect += Math.abs(d1 - d0);
       }
       inflect /= Math.max(data.profile.length - 2, 1);
-      if (inflect >= 0.006 && inflect <= 0.09) score += 0.7;
-      else score += Math.max(0, 0.45 - Math.abs(inflect - 0.035) * 4);
+      if (inflect >= 0.008 && inflect <= 0.11) score += 0.85;
+      else score += Math.max(0, 0.5 - Math.abs(inflect - 0.038) * 3.2);
 
       const aspect = sig.maxR / Math.max(data.yRange, 0.1);
-      score += 0.9 - Math.min(0.9, Math.abs(aspect - 0.92) / 0.55);
+      score += 0.95 - Math.min(0.95, Math.abs(aspect - 0.88) / 0.62);
 
-      score -= profilePotteryDeparturePenalty(data.profile) * 1.8;
-      score -= profileBoxinessScore(data.profile) * 2.6;
-      score -= profileShoulderCornerPenalty(data.profile) * 1.4;
-      score -= profileTrapezoidBasePenalty(data.profile) * 1.2;
+      score -= profilePotteryDeparturePenalty(data.profile) * 1.35;
+      score -= profileBoxinessScore(data.profile) * 2.8;
+      score -= profileShoulderCornerPenalty(data.profile) * 1.2;
+      score -= profileTrapezoidBasePenalty(data.profile) * 1.0;
 
       const mouthRatio = sig.mouthR / Math.max(sig.maxR, 0.01);
-      if (mouthRatio >= 0.24 && mouthRatio <= 0.52) score += 0.5;
-      else if (mouthRatio < 0.22 || mouthRatio > 0.58) score -= 0.55;
+      if (mouthRatio >= 0.18 && mouthRatio <= 0.54) score += 0.55;
+      else if (mouthRatio < 0.16 || mouthRatio > 0.62) score -= 0.4;
 
       const baseRatio = sig.minR / Math.max(sig.maxR, 0.01);
-      if (baseRatio >= 0.14 && baseRatio <= 0.52) score += 0.4;
-      else if (baseRatio < 0.12) score -= 0.65;
+      if (baseRatio >= 0.12 && baseRatio <= 0.54) score += 0.45;
+      else if (baseRatio < 0.1) score -= 0.5;
 
-      if (sig.maxR >= 0.32 && sig.maxR <= 1.02) score += 0.4;
-      else if (sig.maxR < 0.28) score -= 0.45;
-      else score -= 0.12;
+      if (sig.maxR >= 0.3 && sig.maxR <= 1.05) score += 0.45;
+      else if (sig.maxR < 0.26) score -= 0.4;
 
-      score += culturalProfileScore(data) * 1.85;
-      score += profileMoonJarScore(data.profile) * 0.45;
-      score -= profileCapsuleScore(data.profile) * (profileMoonJarScore(data.profile) > 0.55 ? 0.75 : 2.4);
-      score -= profileSlendernessScore(data.profile) * 2.8;
+      score += culturalProfileScore(data) * 2.05;
+      score += profileMoonJarScore(data.profile) * 0.5;
+      score += profileMaebyeongScore(data.profile) * 0.42;
+      score += profileBaekjaScore(data.profile) * 0.38;
+      score -= profileCapsuleScore(data.profile) * (curveBeauty > 0.5 ? 0.55 : 2.0);
+
+      const slenderPenalty = curveBeauty > 0.55 ? 1.1 : 2.6;
+      const thinPenalty = curveBeauty > 0.55 ? 1.2 : 2.8;
+      score -= profileSlendernessScore(data.profile) * slenderPenalty;
+      score -= profileThinGirthScore(data.profile) * thinPenalty;
 
       const footR = data.profile[Math.floor(data.profile.length * 0.04)].x;
       const footRatio = footR / Math.max(sig.maxR, 0.01);
-      if (footRatio >= 0.16 && footRatio <= 0.28) score += 0.45;
-      else if (footRatio >= 0.12 && footRatio <= 0.34) score += 0.22;
-      else if (footRatio < 0.12 || footRatio > 0.38) score -= 0.55;
+      if (footRatio >= 0.14 && footRatio <= 0.3) score += 0.48;
+      else if (footRatio >= 0.1 && footRatio <= 0.36) score += 0.24;
 
       const neckR = data.profile[Math.floor(data.profile.length * 0.92)].x;
       const neckRatio = neckR / Math.max(sig.maxR, 0.01);
-      if (neckRatio <= 0.72) score += 0.45;
-      else score -= (neckRatio - 0.72) * 1.6;
+      if (neckRatio <= 0.78) score += 0.52;
+      else score -= (neckRatio - 0.78) * 1.2;
 
       return score;
     }
@@ -1937,13 +2688,18 @@
       let silhouetteDiff = 0;
       for (let i = 0; i < fromData.profile.length; i++) {
         silhouetteDiff += Math.abs(fromData.profile[i].x - candidate.profile[i].x);
+        silhouetteDiff += Math.abs(fromData.profile[i].y - candidate.profile[i].y) * 0.9;
       }
       silhouetteDiff /= fromData.profile.length;
       const surfaceBonus = candidate.surfaceType !== fromData.surfaceType ? 0.75 : 0;
-      const typeBonus = candidate.formType && fromData.formType && candidate.formType !== fromData.formType ? 4.5 : -2.0;
-      const colorBonus = Math.abs(candidate.colorShift - fromData.colorShift) * 1.4;
-      return rDiff * 1.6 + mouthDiff * 1.4 + waistDiff * 2.0 + fullnessDiff * 2.2
-        + volumeDiff * 1.2 + silhouetteDiff * 6.5 + surfaceBonus + typeBonus + colorBonus;
+      const typeBonus = candidate.formType && fromData.formType && candidate.formType !== fromData.formType ? 8.5 : -1.2;
+      const colorBonus = Math.abs(candidate.colorShift - fromData.colorShift) * 2.6;
+      const heightDiff = Math.abs((candidate.yRange ?? 1) - (fromData.yRange ?? 1))
+        / Math.max(fromData.yRange ?? 1, 0.1);
+      const scaleDiff = Math.abs((candidate.heightScale ?? 1) - (fromData.heightScale ?? 1));
+      return rDiff * 2.0 + mouthDiff * 1.8 + waistDiff * 2.6 + fullnessDiff * 2.8
+        + volumeDiff * 1.6 + silhouetteDiff * 9.5 + heightDiff * 4.2 + scaleDiff * 3.6
+        + surfaceBonus + typeBonus + colorBonus;
     }
 
     // ── Shaders ───────────────────────────────────────────────────────────
@@ -1953,26 +2709,32 @@
       uniform float uJarYMin;
       uniform float uJarYRange;
       uniform float uBecoming;
+      uniform float uMorphing;
       uniform float uStreamMode;
       varying vec3 vWorldPos;
       varying vec3 vNormal;
       varying vec3 vViewDir;
       varying vec2 vUv;
       varying float vDepth;
+      varying float vFlowCoord;
 
       void main() {
         vUv = uv;
-        float t = uTime * 0.42;
+        float t = uTime * 0.55;
         float flowH = vUv.y;
         float angMix = position.x * 0.71 + position.z * 0.53;
+        vFlowCoord = flowH * 7.4 - t * 1.38 + angMix * 1.35;
 
         float preDepth = uStreamMode > 0.5 ? vUv.y : (position.y - uJarYMin) / uJarYRange;
         float poleFade = uStreamMode > 0.5 ? 1.0
           : smoothstep(0.0, 0.05, preDepth) * smoothstep(1.0, 0.96, preDepth);
 
-        float ripple = sin(flowH * 2.2 - t * 0.16 + angMix * 0.7) * 0.0016
-          + sin(flowH * 1.5 - t * 0.12 + position.x * 0.35 - position.z * 0.28) * 0.001;
-        ripple *= poleFade * uDispScale * (1.0 + uBecoming * 0.05);
+        float downFlow = sin(flowH * 7.5 - t * 1.15 + angMix * 2.1) * 0.0018
+          + sin(flowH * 12.0 - t * 1.45 + angMix * 1.4 + 1.7) * 0.001
+          + sin(flowH * 4.2 - t * 0.82 + angMix * 3.3) * 0.0013;
+        float ripple = downFlow
+          + sin(flowH * 2.2 - t * 0.28 + angMix * 0.7) * 0.0008;
+        ripple *= poleFade * uDispScale * (0.92 + uBecoming * 0.12) * (1.0 - uMorphing * 0.88);
 
         vec3 displaced = position + normal * ripple;
         vec4 worldPos = modelMatrix * vec4(displaced, 1.0);
@@ -2004,19 +2766,24 @@
       uniform float uAppear;
       uniform float uBirthActive;
       uniform float uBecoming;
+      uniform float uMorphing;
       uniform float uStreamMode;
       uniform float uStreamReveal;
       uniform float uPerfTier;
       uniform vec3 uWaterWhite;
       uniform vec3 uUnderwaterHaze;
+      uniform vec3 uCeladonHighlight;
       varying vec3 vWorldPos;
       varying vec3 vNormal;
       varying vec3 vViewDir;
       varying vec2 vUv;
       varying float vDepth;
+      varying float vFlowCoord;
 
       void main() {
-        float t = uTime * 0.16;
+        float morphStable = 1.0 - uMorphing * 0.92;
+        float t = uTime * 0.22;
+        float tFlow = uTime * 0.58;
 
         vec3 colDeep = mix(uColorDeepPrev, uColorDeep, uColorMorphT);
         vec3 colMid = mix(uColorMidPrev, uColorMid, uColorMorphT);
@@ -2032,7 +2799,6 @@
         float flowDrift = sin(flowH * 2.0 - t * 0.08 + wx * 0.22 + wz * 0.18 + seed) * 0.5 + 0.5;
         float milkVein = sin(flowH * 2.1 - t * 0.06 + angMix * 0.75 + seed * 1.7) * 0.5 + 0.5;
         milkVein *= sin(flowH * 1.05 - t * 0.05 + wx * 0.28 + wz * 0.22) * 0.5 + 0.5;
-        float surfaceRipple = sin(flowH * 1.8 - t * 0.09 + angMix * 0.5 + seed) * 0.004;
 
         if (uInterior > 0.5) {
           discard;
@@ -2040,56 +2806,146 @@
 
         vec3 viewDir = normalize(vViewDir);
         vec3 lightDir = normalize(uLightPos - vWorldPos);
-        vec3 n = normalize(vNormal
-          + vec3(surfaceRipple * 0.05, flowField * 0.015, surfaceRipple * 0.04)
+        vec3 baseNormal = normalize(vNormal);
+
+        float baseNdotV = max(dot(baseNormal, viewDir), 0.0);
+        float thickness = clamp(vDepth * 0.9 + (1.0 - baseNdotV) * 0.38, 0.0, 1.0);
+        float thinness = 1.0 - thickness;
+        float fresnel = pow(1.0 - baseNdotV, 3.0);
+        float fresnelRim = pow(1.0 - baseNdotV, mix(1.6, 2.4, uMorphing));
+        float poleMask = smoothstep(0.02, 0.1, vDepth) * smoothstep(0.98, 0.9, vDepth);
+        float surfaceMask = clamp(fresnelRim * 0.52 + thinness * 0.48, 0.0, 1.0) * poleMask;
+
+        float tCeramic = uTime * 0.19;
+        float cVeinA = sin(flowH * 4.6 - tCeramic * 0.56 + angMix * 1.8 + seed * 1.35) * 0.5 + 0.5;
+        float cVeinB = sin(flowH * 7.4 - tCeramic * 0.78 + angMix * 1.15 - seed * 0.85) * 0.5 + 0.5;
+        float cVeinC = sin(angMix * 3.15 + flowH * 3.35 - tCeramic * 0.46 + seed * 2.25) * 0.5 + 0.5;
+        float ceramicVein = pow(cVeinA * cVeinB, 1.32) * smoothstep(0.3, 0.74, cVeinC);
+
+        float cStream = sin(flowH * 2.35 - tCeramic * 0.36 + angMix * 0.68 + seed) * 0.5 + 0.5;
+        cStream *= sin(flowH * 1.28 - tCeramic * 0.26 + angMix * 1.02 + seed * 0.55) * 0.5 + 0.5;
+        float ceramicStream = smoothstep(0.48, 0.8, cStream);
+
+        float cSpiral = sin(angMix * 4.05 + flowH * 1.85 - tCeramic * 0.5 + seed * 1.75) * 0.5 + 0.5;
+        cSpiral = smoothstep(0.4, 0.72, cSpiral);
+
+        float cDrift = sin(flowH * 1.15 - tCeramic * 0.22 + angMix * 0.55 + seed * 0.4) * 0.5 + 0.5;
+        cDrift *= sin(angMix * 2.4 + flowH * 0.85 - tCeramic * 0.18 + seed * 1.1) * 0.5 + 0.5;
+
+        float ceramicWater = ceramicVein * 0.48 + ceramicStream * 0.34 + cSpiral * 0.2 + cDrift * 0.14;
+        float waterVeinBright = ceramicStream * 0.72 + cSpiral * 0.48 + cDrift * 0.35;
+        float waterVeinShadow = ceramicVein * (1.0 - ceramicStream * 0.45);
+        ceramicWater *= 0.58 + thickness * 0.22 + thinness * 0.18;
+        ceramicWater *= poleMask * (0.86 + uBecoming * 0.12);
+
+        float streakA = sin(flowH * 10.5 - tFlow * 1.42 + angMix * 3.4 + seed) * 0.5 + 0.5;
+        float streakB = sin(flowH * 17.0 - tFlow * 1.95 + angMix * 1.8 - seed * 1.4) * 0.5 + 0.5;
+        float streakC = sin(flowH * 6.0 - tFlow * 1.05 + angMix * 4.6 + seed * 0.8) * 0.5 + 0.5;
+        float rivulet = pow(streakA * streakB, 2.4) * smoothstep(0.28, 0.88, streakC);
+
+        float flowBand = smoothstep(0.38, 0.78,
+          sin(flowH * 3.6 - tFlow * 0.78 + angMix * 1.1 + seed) * 0.5 + 0.5
         );
+        float spiralFlow = sin(angMix * 5.8 + flowH * 3.1 - tFlow * 1.12 + seed * 2.2) * 0.5 + 0.5;
+        spiralFlow = smoothstep(0.42, 0.82, spiralFlow);
+
+        float flowRipple = sin(vFlowCoord * 1.15 - tFlow * 0.65) * 0.5 + 0.5;
+        flowRipple *= sin(flowH * 13.5 - tFlow * 1.65 + angMix * 2.2 + seed) * 0.5 + 0.5;
+
+        float sheetA = sin(vFlowCoord * 0.85 - tFlow * 1.35 + angMix * 1.6) * 0.5 + 0.5;
+        float sheetB = sin(flowH * 21.0 - tFlow * 2.4 + angMix * 3.1) * 0.5 + 0.5;
+        float wetSheet = pow(sheetA * sheetB * flowRipple, 1.65) * surfaceMask;
+
+        float trailA = sin(flowH * 24.0 - tFlow * 2.8 + angMix * 2.4) * 0.5 + 0.5;
+        float trailB = sin(vFlowCoord * 0.62 - tFlow * 1.05) * 0.5 + 0.5;
+        float waterTrail = pow(trailA * trailB, 2.1) * smoothstep(0.22, 0.82, rivulet) * surfaceMask;
+
+        float causticA = sin(wx * 3.4 + wz * 2.6 - tFlow * 1.15 + flowH * 5.2) * 0.5 + 0.5;
+        float causticB = sin(wx * 2.2 - wz * 3.8 + tFlow * 0.95 + angMix * 2.2) * 0.5 + 0.5;
+        float causticNet = pow(causticA * causticB, 2.4) * (0.28 + thinness * 0.42 + surfaceMask * 0.22);
+
+        float flowGradV = sin(flowH * 11.5 - tFlow * 1.55 + angMix * 2.6 + seed) * rivulet;
+        float flowGradA = sin(angMix * 4.2 + flowH * 8.0 - tFlow * 1.25 + seed * 1.1) * rivulet;
+        float cGradV = sin(flowH * 6.1 - tCeramic * 0.62 + angMix * 2.15 + seed) * ceramicWater;
+        float cGradA = sin(angMix * 3.6 + flowH * 5.2 - tCeramic * 0.52 + seed * 1.15) * ceramicWater;
+        vec3 flowNormal = baseNormal
+          + vec3(
+            cos(angMix) * flowGradA * 0.09 + cos(angMix * 0.85) * cGradA * 0.028,
+            flowGradV * 0.05 + cGradV * 0.02 + (flowRipple - 0.5) * 0.032,
+            sin(angMix) * flowGradA * 0.09 + sin(angMix * 0.85) * cGradA * 0.028
+          ) * surfaceMask * (0.62 + uBecoming * 0.14) * morphStable
+          + vec3(cos(angMix * 0.72), cGradV * 0.018, sin(angMix * 0.72)) * ceramicWater * 0.1 * morphStable;
+
+        vec3 n = normalize(flowNormal);
         float NdotV = max(dot(n, viewDir), 0.0);
         float NdotL = max(dot(n, lightDir), 0.0);
 
-        float thickness = clamp(vDepth * 0.9 + (1.0 - NdotV) * 0.38, 0.0, 1.0);
-        float thinness = 1.0 - thickness;
-        float fresnel = pow(1.0 - NdotV, 3.0);
-        float fresnelRim = pow(1.0 - NdotV, 1.6);
-
-        vec3 volDeep = colDeep * vec3(0.68, 0.8, 0.92);
-        vec3 volMid = colMid * vec3(0.52, 0.7, 0.86);
-        vec3 volLight = colLight * vec3(0.38, 0.62, 0.8);
+        vec3 volDeep = colDeep * vec3(0.92, 1.0, 1.02);
+        vec3 volMid = colMid * vec3(0.82, 0.96, 1.0);
+        vec3 volLight = colLight * vec3(0.68, 0.88, 0.96);
+        vec3 glazeHighlight = mix(volLight, uCeladonHighlight, 0.55);
 
         float internalGlow = mix(flowField, flowDrift, 0.42);
-        float milkyPatch = smoothstep(0.38, 0.74, milkVein) * smoothstep(0.58, 0.1, thickness);
-        milkyPatch += smoothstep(0.45, 0.78, internalGlow) * thinness * 0.42;
+        float milkyPatch = smoothstep(0.42, 0.78, milkVein) * smoothstep(0.62, 0.12, thickness);
+        milkyPatch += smoothstep(0.48, 0.82, internalGlow) * thinness * 0.18;
         milkyPatch = clamp(milkyPatch, 0.0, 1.0);
 
-        vec3 volumeTint = mix(volLight, volMid, thickness * 0.68);
-        volumeTint = mix(volumeTint, volDeep, thickness * thickness * 0.55);
-        volumeTint = mix(volumeTint, uWaterWhite, milkyPatch * 0.68);
+        vec3 bodyCeramic = mix(volDeep, volMid, 0.42 + ceramicWater * 0.38);
+        bodyCeramic = mix(bodyCeramic, volDeep * 1.08, waterVeinShadow * ceramicWater * 0.32);
+        vec3 volumeTint = mix(bodyCeramic, mix(uUnderwaterHaze, glazeHighlight, 0.58), waterVeinBright * ceramicWater * 0.52);
+        volumeTint = mix(volumeTint, uWaterWhite, wetSheet * 0.42 + waterTrail * 0.36);
+        volumeTint = mix(volumeTint, mix(uWaterWhite, uCeladonHighlight, 0.35), causticNet * 0.38);
+        volumeTint = mix(volumeTint, mix(uUnderwaterHaze, volLight, 0.4), milkyPatch * 0.16);
 
-        vec3 bgThrough = mix(uBgColor, volumeTint, 0.22 + thickness * 0.42);
-        bgThrough = mix(bgThrough, uUnderwaterHaze, thinness * 0.38);
-        bgThrough = mix(bgThrough, uWaterWhite, milkyPatch * thinness * 0.52);
+        vec3 bgThrough = mix(uBgColor, volumeTint, 0.48 + thickness * 0.38);
+        bgThrough = mix(bgThrough, uWaterWhite, wetSheet * 0.12 + waterTrail * 0.1);
 
         float backScatter = pow(max(dot(viewDir, lightDir), 0.0), 2.4);
-        vec3 subsurface = uWaterWhite * backScatter * thinness * 0.28;
-        subsurface += uUnderwaterHaze * NdotL * thinness * 0.18;
-        subsurface += mix(uWaterWhite, volLight, 0.35) * milkyPatch * 0.14;
+        vec3 subsurface = mix(volMid, uUnderwaterHaze, 0.55) * backScatter * thinness * 0.2;
+        subsurface += volDeep * NdotL * thinness * 0.08;
+        subsurface += glazeHighlight * milkyPatch * 0.1;
+        subsurface += mix(glazeHighlight, uUnderwaterHaze, 0.5) * waterVeinBright * ceramicWater * 0.14;
 
-        vec3 scatter = mix(volMid, uWaterWhite, milkyPatch * 0.55) * (0.035 + thickness * 0.055);
+        vec3 scatter = volMid * (0.045 + thickness * 0.065);
+        scatter += mix(volDeep, volMid, 0.45) * waterVeinShadow * ceramicWater * 0.055;
+        scatter += glazeHighlight * waterVeinBright * ceramicWater * 0.06;
 
         vec3 halfDir = normalize(lightDir + viewDir);
-        float spec = pow(max(dot(n, halfDir), 0.0), 88.0) * fresnelRim * 0.08;
-        float caustic = pow(max(NdotL, 0.0), 3.2) * (0.03 + internalGlow * 0.04 + milkyPatch * 0.03);
+        float specNdotH = max(dot(baseNormal, halfDir), 0.0);
+        specNdotH = specNdotH * specNdotH * (3.0 - 2.0 * specNdotH);
+        float spec = pow(specNdotH, 32.0) * fresnelRim * 0.05 * morphStable;
+        float flowSpec = pow(specNdotH, 22.0) * (rivulet * 0.55 + wetSheet * 0.85 + waterTrail * 0.65) * surfaceMask * 0.14;
+        flowSpec += pow(specNdotH, 18.0) * flowBand * surfaceMask * 0.06;
+        flowSpec *= morphStable;
+        float ceramicSpec = pow(specNdotH, 22.0) * waterVeinBright * ceramicWater * 0.05;
+        ceramicSpec += pow(specNdotH, 28.0) * causticNet * 0.08;
+        float caustic = pow(max(dot(baseNormal, lightDir), 0.0), 2.6)
+          * (0.04 + causticNet * 0.12 + wetSheet * 0.08);
+        caustic *= morphStable;
 
         vec3 color = bgThrough + scatter + subsurface;
-        color += spec * mix(uWaterWhite, volLight, 0.45);
-        color += caustic * mix(uWaterWhite, volLight, 0.6) * 0.5;
-        color = mix(color, uWaterWhite * 0.78 + volLight * 0.22, fresnel * 0.5);
-        color = mix(color, uUnderwaterHaze, thinness * 0.12);
-        color = color / (color + vec3(0.05));
+        color += spec * mix(uCeladonHighlight, volLight, 0.5);
+        color += flowSpec * mix(uWaterWhite, uCeladonHighlight, 0.72);
+        color += ceramicSpec * mix(uCeladonHighlight, uUnderwaterHaze, 0.5);
+        color += caustic * mix(uWaterWhite, glazeHighlight, 0.62);
+        color += mix(volDeep * 0.9, volMid, 0.4) * waterVeinShadow * ceramicWater * 0.12;
+        color += mix(uWaterWhite, glazeHighlight, 0.65) * waterVeinBright * ceramicWater * 0.18;
+        color += uWaterWhite * (wetSheet * 0.28 + waterTrail * 0.22);
+        color += mix(uCeladonHighlight, uWaterWhite, 0.55) * rivulet * surfaceMask * 0.16;
+        color += uUnderwaterHaze * spiralFlow * surfaceMask * 0.08;
+        color = mix(color, mix(uWaterWhite, glazeHighlight, 0.48), flowBand * surfaceMask * 0.14);
+        color = mix(color, mix(uWaterWhite, volLight, 0.55), fresnel * 0.22 * morphStable);
+        color = mix(color, volMid, thinness * 0.05);
+        color = color / (color + vec3(0.04));
 
-        float alpha = mix(0.05, 0.52, fresnel);
-        alpha += thickness * 0.2;
-        alpha -= milkyPatch * thinness * 0.14;
-        alpha = clamp(alpha, 0.04, 0.58) * uAppear;
+        float alpha = mix(0.08, 0.62, fresnel);
+        alpha += thickness * 0.28;
+        alpha -= milkyPatch * thinness * 0.08;
+        alpha += rivulet * surfaceMask * 0.05;
+        alpha += wetSheet * 0.06;
+        alpha += waterTrail * 0.04;
+        alpha += ceramicWater * 0.04;
+        alpha = clamp(alpha, 0.06, 0.68) * uAppear;
         if (uStreamMode > 0.5) {
           float streamMask = smoothstep(uStreamReveal + 0.015, uStreamReveal - 0.055, vDepth);
           alpha *= streamMask;
@@ -2102,7 +2958,7 @@
 
     const SEA_BG = 0x3b5a7a;
 
-    const MAX_DEVICE_DPR = 1.75;
+    const MAX_DEVICE_DPR = 1.5;
 
     // ── Scene Setup ───────────────────────────────────────────────────────
     const container = document.getElementById('canvas-container');
@@ -2115,7 +2971,7 @@
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0x000000, 0);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.98;
+    renderer.toneMappingExposure = 0.9;
     container.appendChild(renderer.domElement);
 
     function resizeRenderSurface() {
@@ -2190,7 +3046,8 @@
         uStreamReveal: { value: 1 },
         uPerfTier: { value: 1 },
         uWaterWhite: { value: WATER_WHITE.clone() },
-        uUnderwaterHaze: { value: UNDERWATER_HAZE.clone() }
+        uUnderwaterHaze: { value: UNDERWATER_HAZE.clone() },
+        uCeladonHighlight: { value: CELADON_HIGHLIGHT.clone() }
       };
     }
 
@@ -2255,7 +3112,7 @@
       norm.needsUpdate = true;
     }
 
-    function updateLatheGeometryInPlace(geometry, profile, segments) {
+    function updateLatheGeometryInPlace(geometry, profile, segments, options = {}) {
       const pos = geometry.attributes.position;
       if (!pos || pos.count !== (segments + 1) * profile.length) return false;
       const arr = pos.array;
@@ -2274,6 +3131,32 @@
       }
       pos.needsUpdate = true;
       updateLatheNormalsInPlace(geometry, profile, segments);
+      const norm = geometry.attributes.normal;
+      if (norm && options.smoothNormals > 0) {
+        const narr = norm.array;
+        if (!geometry.userData.prevNormalArray || geometry.userData.prevNormalArray.length !== narr.length) {
+          geometry.userData.prevNormalArray = new Float32Array(narr.length);
+          geometry.userData.prevNormalArray.set(narr);
+        } else {
+          const prev = geometry.userData.prevNormalArray;
+          const blend = Math.min(0.72, Math.max(0, options.smoothNormals));
+          for (let k = 0; k < narr.length; k += 3) {
+            let nx = prev[k] * blend + narr[k] * (1 - blend);
+            let ny = prev[k + 1] * blend + narr[k + 1] * (1 - blend);
+            let nz = prev[k + 2] * blend + narr[k + 2] * (1 - blend);
+            const len = Math.hypot(nx, ny, nz) || 1;
+            narr[k] = nx / len;
+            narr[k + 1] = ny / len;
+            narr[k + 2] = nz / len;
+          }
+          prev.set(narr);
+        }
+      } else if (norm) {
+        if (!geometry.userData.prevNormalArray || geometry.userData.prevNormalArray.length !== norm.array.length) {
+          geometry.userData.prevNormalArray = new Float32Array(norm.array.length);
+        }
+        geometry.userData.prevNormalArray.set(norm.array);
+      }
       syncLatheSeamNormals(geometry, segments, profile.length);
       return true;
     }
@@ -2322,7 +3205,7 @@
       const { skipInner = true } = options;
       const segments = jar.latheSegments;
 
-      if (!updateLatheGeometryInPlace(jar.outer.geometry, geo.profile, segments)) {
+      if (!updateLatheGeometryInPlace(jar.outer.geometry, geo.profile, segments, options)) {
         const outerGeo = finalizeLatheGeometry(
           new THREE.LatheGeometry(geo.profile, segments),
           segments,
@@ -2351,8 +3234,8 @@
     }
 
     function applyMorphUniforms(jar, data) {
-      applyShapeUniforms(jar, data);
-      finishColorMorph(jar, data.colorShift);
+      applyGeometryUniforms(jar, data);
+      lockJarColors(jar, jar.activeColorShift ?? 0.5);
     }
 
     function applyProfileToJar(jar, data) {
@@ -2372,8 +3255,6 @@
       );
       outerUniforms.uDispScale.value = initialData.dispScale;
       outerUniforms.uAppear.value = 0;
-      applyColorsFromShift(outerUniforms, initialData.colorShift);
-      snapshotColorsToPrev(outerUniforms);
 
       const outerGeo = finalizeLatheGeometry(
         new THREE.LatheGeometry(initialData.profile, LATHE_SEGMENTS),
@@ -2399,8 +3280,6 @@
       innerUniforms.uDispScale.value = initialData.dispScale * 0.32;
       innerUniforms.uAppear.value = 0;
       innerUniforms.uTime = outerUniforms.uTime;
-      applyColorsFromShift(innerUniforms, initialData.colorShift);
-      snapshotColorsToPrev(innerUniforms);
 
       const innerGeo = new THREE.LatheGeometry(createInnerProfile(initialData.profile), LATHE_SEGMENTS - 16);
       innerGeo.computeVertexNormals();
@@ -2428,7 +3307,7 @@
 
       fieldGroup.add(group);
 
-      return {
+      const jar = {
         group,
         outer,
         inner,
@@ -2438,8 +3317,11 @@
         latheSegments: LATHE_SEGMENTS,
         innerSegments: Math.max(48, LATHE_SEGMENTS - 16),
         baseMouthR: initialData.mouthR,
-        timeOffset: initialData.formSeed * 0.01
+        timeOffset: initialData.formSeed * 0.01,
+        activeColorShift: 0.5
       };
+      lockJarColors(jar, 0.5);
+      return jar;
     }
 
     function easeSineOut(t) {
@@ -2453,25 +3335,12 @@
     let birthState = null;
 
     function runWaterBirth(jar, targetData, onComplete) {
-      snapshotJarColorsToPrev(jar);
-      applyColorsFromShift(jar.outerUniforms, targetData.colorShift);
-      applyColorsFromShift(jar.innerUniforms, targetData.colorShift);
-      jar.outerUniforms.uColorMorphT.value = 0;
-      jar.innerUniforms.uColorMorphT.value = 0;
-      jar.outerUniforms.uFormSeed.value = targetData.formSeed;
-      jar.innerUniforms.uFormSeed.value = targetData.formSeed;
-      jar.outerUniforms.uSurfaceType.value = targetData.surfaceType;
-      jar.innerUniforms.uSurfaceType.value = targetData.surfaceType;
-      jar.outerUniforms.uDispScale.value = targetData.dispScale;
-      jar.innerUniforms.uDispScale.value = targetData.dispScale * 0.32;
-      jar.outerUniforms.uJarYMin.value = targetData.yMin;
-      jar.outerUniforms.uJarYRange.value = targetData.yRange;
-      jar.innerUniforms.uJarYMin.value = targetData.yMin;
-      jar.innerUniforms.uJarYRange.value = targetData.yRange;
+      lockJarColors(jar, 0.5);
+      applyGeometryUniforms(jar, targetData);
       jar.outerUniforms.uBirthActive.value = 0;
       jar.innerUniforms.uBirthActive.value = 0;
-      jar.outerUniforms.uBirthProgress.value = 1;
-      jar.innerUniforms.uBirthProgress.value = 1;
+      jar.outerUniforms.uBirthProgress.value = 0;
+      jar.innerUniforms.uBirthProgress.value = 0;
       jar.outerUniforms.uBecoming.value = 0.22;
       jar.innerUniforms.uBecoming.value = 0.22;
       applyProfileGeometryToJar(jar, targetData);
@@ -2495,24 +3364,37 @@
       jar.innerUniforms.uBirthProgress.value = t;
       jar.outerUniforms.uBecoming.value = 0.18 + t * 0.08;
       jar.innerUniforms.uBecoming.value = jar.outerUniforms.uBecoming.value;
-      setColorMorphProgress(jar, t);
       jar.outerUniforms.uAppear.value = Math.min(1, t * 1.05);
       jar.innerUniforms.uAppear.value = Math.min(1, t * 1.05);
       jar.meniscus.material.opacity = Math.min(0.2, Math.max(0, (t - 0.85) * 1.4));
       jar.meniscus.material.color.lerpColors(
         midColorFromShift(targetData.colorShift),
-        WATER_WHITE,
-        Math.min(1, t * 0.85)
+        CELADON_HIGHLIGHT,
+        Math.min(1, t * 0.72)
       );
 
       if (rawT >= 1) {
-        applyProfileGeometryToJar(jar, targetData);
-        applyShapeUniforms(jar, targetData);
-        finishColorMorph(jar, targetData.colorShift);
+        const settled = processMorphEndpointProfile(targetData.profile);
+        applyProfileGeometryToJar(jar, {
+          ...targetData,
+          profile: settled,
+          mouthR: targetData.mouthR,
+          mouthY: targetData.mouthY
+        });
+        applyGeometryUniforms(jar, targetData);
+        currentForm = {
+          ...targetData,
+          profile: settled.map((p) => p.clone()),
+          mouthR: settled[settled.length - 1].x,
+          mouthY: settled[settled.length - 1].y,
+          yMin: profileBounds(settled).yMin,
+          yRange: profileBounds(settled).yRange
+        };
+        lockJarColors(jar, 0.5);
         jar.outerUniforms.uAppear.value = 1;
         jar.innerUniforms.uAppear.value = 1;
         jar.meniscus.material.opacity = 0.2;
-        jar.meniscus.material.color.copy(WATER_WHITE);
+        jar.meniscus.material.color.copy(CELADON_HIGHLIGHT);
         jar.outerUniforms.uBirthActive.value = 0;
         jar.innerUniforms.uBirthActive.value = 0;
         jar.outerUniforms.uBirthProgress.value = 1;
@@ -2529,7 +3411,7 @@
     let currentForm = null;
     let morphState = null;
     let morphTimer = null;
-    const morphPrefetch = { target: null, gen: -1, busy: false, search: null, waitSince: 0 };
+    const morphPrefetch = { target: null, gen: -1, busy: false };
     const morphScratch = {
       profile: [],
       inner: [],
@@ -2542,34 +3424,6 @@
       }
     };
 
-    function finalizeMorphPrefetchIfDone() {
-      if (!morphPrefetch.search?.done) return;
-      morphPrefetch.target = morphPrefetch.search.result;
-      morphPrefetch.gen = morphPrefetch.search.morphIndex;
-      morphPrefetch.search = null;
-      morphPrefetch.busy = false;
-    }
-
-    function runMorphPrefetchBudget(budgetMs = 5) {
-      if (!morphPrefetch.search) return;
-      const budgetStart = performance.now();
-      while (!morphPrefetch.search.done && performance.now() - budgetStart < budgetMs) {
-        stepContrastingSearch(morphPrefetch.search);
-      }
-      finalizeMorphPrefetchIfDone();
-    }
-
-    function pumpMorphPrefetch() {
-      runMorphPrefetchBudget(8);
-      if (morphPrefetch.search) {
-        if (typeof requestIdleCallback !== 'undefined') {
-          requestIdleCallback(pumpMorphPrefetch, { timeout: 1200 });
-        } else {
-          setTimeout(pumpMorphPrefetch, 32);
-        }
-      }
-    }
-
     function prefetchNextMorph() {
       if (!currentForm) return;
       const nextGen = morphGen + 1;
@@ -2577,12 +3431,13 @@
       if (morphPrefetch.busy) return;
 
       morphPrefetch.busy = true;
-      morphPrefetch.search = createContrastingSearch(
+      morphPrefetch.target = pickFastMorphTarget(
         currentForm,
         morphSeed + nextGen * 7919,
         nextGen
       );
-      pumpMorphPrefetch();
+      morphPrefetch.gen = nextGen;
+      morphPrefetch.busy = false;
     }
 
     function resolveMorphTarget(pendingGen) {
@@ -2592,65 +3447,100 @@
         morphPrefetch.gen = -1;
         return target;
       }
-      return pickQuickMorphTarget(
+      return pickFastMorphTarget(
         currentForm,
         morphSeed + pendingGen * 7919,
         pendingGen
       );
     }
 
-    function lerpProfileInto(fromData, toData, t, out) {
-      const ease = smoothMorphT(t);
-      const n = Math.min(fromData.profile.length, toData.profile.length);
-      while (out.length < n) out.push(new THREE.Vector2());
-      for (let i = 0; i < n; i++) {
-        out[i].x = fromData.profile[i].x + (toData.profile[i].x - fromData.profile[i].x) * ease;
-        out[i].y = fromData.profile[i].y + (toData.profile[i].y - fromData.profile[i].y) * ease;
-      }
-      out.length = n;
+    function processMorphEndpointProfile(profile) {
+      const out = profile.map((p) => p.clone());
       capProfileSlopes(out, 0.005);
       const footFixed = normalizeCeramicFoot(out);
-      for (let i = 0; i < n; i++) {
+      for (let i = 0; i < out.length; i++) {
         out[i].x = footFixed[i].x;
         out[i].y = footFixed[i].y;
       }
       const relaxed = relaxBoxyWalls(out);
-      for (let i = 0; i < n; i++) {
+      for (let i = 0; i < relaxed.length; i++) {
         out[i].x = relaxed[i].x;
         out[i].y = relaxed[i].y;
       }
+      const waistFixed = softenWaistPinch(out, 0.72);
+      return smoothSculpturalProfile(waistFixed, 1);
+    }
+
+    function lerpProcessedProfiles(fromPts, toPts, ease, out) {
+      const n = Math.min(fromPts.length, toPts.length);
+      while (out.length < n) out.push(new THREE.Vector2());
+      for (let i = 0; i < n; i++) {
+        out[i].x = fromPts[i].x + (toPts[i].x - fromPts[i].x) * ease;
+        out[i].y = fromPts[i].y + (toPts[i].y - fromPts[i].y) * ease;
+      }
+      out.length = n;
+      capProfileSlopes(out, 0.004);
+      return out;
+    }
+
+    function lerpProfileInto(fromData, toData, t, out, fromPts, toPts) {
+      const ease = t;
+      lerpProcessedProfiles(fromPts, toPts, ease, out);
+      const bounds = profileBounds(out);
       morphScratch.geo.profile = out;
-      morphScratch.geo.mouthR = fromData.mouthR + (toData.mouthR - fromData.mouthR) * ease;
-      morphScratch.geo.mouthY = fromData.mouthY + (toData.mouthY - fromData.mouthY) * ease;
+      morphScratch.geo.yMin = bounds.yMin;
+      morphScratch.geo.yRange = bounds.yRange;
+      morphScratch.geo.mouthR = out[out.length - 1].x;
+      morphScratch.geo.mouthY = out[out.length - 1].y;
       return morphScratch.geo;
     }
 
     function updateMorphAnimation(now) {
       if (!morphState) return;
-      const { from, to, startTime, duration } = morphState;
+      const { from, to, fromProfile, toProfile, startTime, duration } = morphState;
       const rawT = Math.min(1, (now - startTime) / duration);
-      const t = easeSineInOut(rawT);
+      const ease = easeSineInOut(rawT);
+      const geoDue = rawT >= 1
+        || perf.lastGeoUpdate === 0
+        || now - perf.lastGeoUpdate >= perf.geoInterval;
 
-      lerpProfileInto(from, to, t, morphScratch.profile);
-      const geo = morphScratch.geo;
-      applyProfileGeometryToJar(morphJar, geo, morphScratch.inner, { skipInner: true });
-      perf.lastGeoUpdate = now;
-      applyAppearanceLerp(morphJar, from, to, t, morphState.startBecoming);
+      lerpProfileInto(from, to, ease, morphScratch.profile, fromProfile, toProfile);
+      if (geoDue) {
+        applyProfileGeometryToJar(morphJar, morphScratch.geo, morphScratch.inner, {
+          skipInner: true,
+          smoothNormals: 0.5
+        });
+        perf.lastGeoUpdate = now;
+      }
+      if (rawT > 0.42 && !morphState.prefetchQueued) {
+        morphState.prefetchQueued = true;
+        prefetchNextMorph();
+      }
+
+      applyAppearanceLerp(morphJar, from, to, ease, morphState.startBecoming);
       morphJar.outerUniforms.uBirthActive.value = 0;
       morphJar.innerUniforms.uBirthActive.value = 0;
 
       if (rawT >= 1) {
-        applyProfileGeometryToJar(morphJar, to);
-        applyShapeUniforms(morphJar, to);
-        finishColorMorph(morphJar, to.colorShift);
+        lerpProfileInto(from, to, 1, morphScratch.profile, fromProfile, toProfile);
+        applyProfileGeometryToJar(morphJar, morphScratch.geo, morphScratch.inner, { skipInner: true });
+        currentForm = {
+          ...to,
+          profile: morphScratch.profile.map((p) => p.clone()),
+          mouthR: morphScratch.profile[morphScratch.profile.length - 1].x,
+          mouthY: morphScratch.profile[morphScratch.profile.length - 1].y,
+          yMin: morphScratch.geo.yMin,
+          yRange: morphScratch.geo.yRange
+        };
+        applyGeometryUniforms(morphJar, currentForm);
+        delete morphJar.outer.geometry.userData.prevNormalArray;
         setMorphingState(morphJar, false);
         morphJar.outerUniforms.uBirthActive.value = 0;
         morphJar.innerUniforms.uBirthActive.value = 0;
         morphJar.outerUniforms.uBirthProgress.value = 1;
         morphJar.innerUniforms.uBirthProgress.value = 1;
-        currentForm = to;
         morphState = null;
-        rememberForm(to);
+        rememberForm(currentForm);
         morphTimer = setTimeout(scheduleNextMorph, HOLD_DURATION * 1000);
         prefetchNextMorph();
       }
@@ -2658,23 +3548,20 @@
 
     function scheduleNextMorph() {
       if (morphTimer) clearTimeout(morphTimer);
+      if (morphState || birthState) return;
       const pendingGen = morphGen + 1;
 
       if (!morphPrefetch.target || morphPrefetch.gen !== pendingGen) {
-        if (!morphPrefetch.busy) prefetchNextMorph();
-        if (!morphPrefetch.waitSince) morphPrefetch.waitSince = performance.now();
-        if (performance.now() - morphPrefetch.waitSince <= 700) {
-          morphTimer = setTimeout(scheduleNextMorph, 24);
-          return;
-        }
-        morphPrefetch.waitSince = 0;
-      } else {
-        morphPrefetch.waitSince = 0;
+        prefetchNextMorph();
       }
 
       morphGen = pendingGen;
       const targetForm = resolveMorphTarget(pendingGen);
-      beginColorMorph(morphJar, targetForm.colorShift);
+      const fromProfile = currentForm.profile.map((p) => p.clone());
+      const toProfile = targetForm.processedProfile
+        || processMorphEndpointProfile(targetForm.profile.map((p) => p.clone()));
+      beginColorMorph(morphJar, morphJar.activeColorShift ?? 0.5);
+      delete morphJar.outer.geometry.userData.prevNormalArray;
       setMorphingState(morphJar, true);
       morphJar.outerUniforms.uBirthActive.value = 0;
       morphJar.innerUniforms.uBirthActive.value = 0;
@@ -2684,9 +3571,12 @@
       morphState = {
         from: currentForm,
         to: targetForm,
+        fromProfile,
+        toProfile,
         startTime: performance.now(),
         duration: MORPH_DURATION * 1000,
-        startBecoming: morphJar.outerUniforms.uBecoming.value
+        startBecoming: morphJar.outerUniforms.uBecoming.value,
+        prefetchQueued: false
       };
       prefetchNextMorph();
     }
@@ -2707,7 +3597,7 @@
       rememberForm(currentForm);
       morphJar = buildMorphingJar(currentForm);
       runWaterBirth(morphJar, currentForm, () => {
-        morphTimer = setTimeout(scheduleNextMorph, 420);
+        morphTimer = setTimeout(scheduleNextMorph, 200);
         prefetchNextMorph();
       });
     }
@@ -2725,20 +3615,24 @@
     // ── Render Loop ───────────────────────────────────────────────────────
     const clock = new THREE.Clock();
     const perf = {
-      geoInterval: 32,
-      lastGeoUpdate: 0
+      geoInterval: 24,
+      lastGeoUpdate: 0,
+      flowTime: 0
     };
 
     function animate() {
       const frameStart = performance.now();
       const elapsed = clock.getElapsedTime();
+      const dt = Math.min(0.05, clock.getDelta());
       const now = frameStart;
       updateBirthAnimation(now);
       updateMorphAnimation(now);
       if (morphJar) {
-        const t = elapsed * 1.15 + morphJar.timeOffset;
-        morphJar.outerUniforms.uTime.value = t;
+        const targetT = elapsed * 1.15 + morphJar.timeOffset;
+        perf.flowTime += (targetT - perf.flowTime) * (1 - Math.exp(-dt * 4.8));
+        morphJar.outerUniforms.uTime.value = perf.flowTime;
         morphJar.outerUniforms.uLightPos.value.copy(surfaceLight.position);
+        perf.geoInterval = morphState ? 28 : 32;
         if (!morphState && !birthState) {
           morphJar.outerUniforms.uBecoming.value = idleBecomingValue(elapsed);
           morphJar.innerUniforms.uBecoming.value = morphJar.outerUniforms.uBecoming.value;
